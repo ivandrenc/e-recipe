@@ -6,23 +6,23 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QTextEdit, 
                             QPushButton, QFileDialog, QFormLayout, QGroupBox,
                             QDateEdit, QSpinBox, QComboBox, QMessageBox,
-                            QScrollArea, QFrame, QSizePolicy)
+                            QScrollArea, QFrame, QSizePolicy, QDialog,
+                            QDialogButtonBox, QFontComboBox, QCheckBox)
 from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF
-from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen
 from PyQt6.QtPrintSupport import QPrinter
 
 # Since PyQt6-PDF doesn't exist, let's use an alternative approach
 # We'll use fitz (PyMuPDF) for PDF rendering
 import fitz  # PyMuPDF
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
 from PyPDF2 import PdfReader, PdfWriter
 
 class PDFPreviewWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pdf_document = None
+        self.template_pdf_path = None
         self.current_page = 0
         self.pixmap = None
         self.scale_factor = 1.0
@@ -182,6 +182,54 @@ class PDFPreviewWidget(QWidget):
             return QRect(orig_x, orig_y, orig_width, orig_height)
         return None
 
+    def update_with_overlay(self, overlay_path):
+        if not self.pdf_document:
+            return
+        
+        try:
+            # Create a temporary merged PDF
+            temp_merged = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            temp_merged.close()
+            
+            # Merge the template with the overlay
+            self.merge_pdfs(self.template_pdf_path, overlay_path, temp_merged.name)
+            
+            # Update the preview with the merged PDF
+            self.load_pdf(temp_merged.name)
+            
+            # Clean up
+            os.unlink(temp_merged.name)
+            
+        except Exception as e:
+            print(f"Error updating preview: {e}")
+
+    def set_template_path(self, path):
+        self.template_pdf_path = path
+
+    def merge_pdfs(self, template_path, overlay_path, output_path):
+        # Read the template PDF
+        template_pdf = PdfReader(template_path)
+        
+        # Read the overlay PDF
+        overlay_pdf = PdfReader(overlay_path)
+        
+        # Create a PDF writer
+        output = PdfWriter()
+        
+        # Merge pages
+        for i in range(len(template_pdf.pages)):
+            template_page = template_pdf.pages[i]
+            
+            # If we have an overlay page for this template page
+            if i < len(overlay_pdf.pages):
+                template_page.merge_page(overlay_pdf.pages[i])
+            
+            output.add_page(template_page)
+        
+        # Write the output PDF
+        with open(output_path, 'wb') as output_file:
+            output.write(output_file)
+
 class MedicalRecipeEditor(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -191,7 +239,27 @@ class MedicalRecipeEditor(QMainWindow):
         
     def initUI(self):
         self.setWindowTitle('Editor de Recetas Médicas')
-        self.setGeometry(100, 100, 1000, 800)
+        
+        # Get the screen geometry
+        screen = QApplication.primaryScreen().geometry()
+        
+        # Calculate window size (80% of screen size)
+        window_width = int(screen.width() * 0.8)
+        window_height = int(screen.height() * 0.8)
+        
+        # Set window geometry
+        self.setGeometry(
+            int(screen.width() * 0.1),  # 10% from left
+            int(screen.height() * 0.1),  # 10% from top
+            window_width,
+            window_height
+        )
+        
+        # Set minimum size (40% of screen size)
+        self.setMinimumSize(
+            int(screen.width() * 0.4),
+            int(screen.height() * 0.4)
+        )
         
         # Main widget and layout
         main_widget = QWidget()
@@ -282,6 +350,53 @@ class MedicalRecipeEditor(QMainWindow):
         self.proxima_cita_edit.setCalendarPopup(True)
         form_layout.addRow("Próxima cita médica:", self.proxima_cita_edit)
         
+        # Add formatting button to each text field
+        for field_name, field in [
+            ('fecha', self.fecha_edit),
+            ('paciente', self.paciente_edit),
+            ('edad', self.edad_edit),
+            ('biotipo', self.biotipo_edit),
+            ('fototipo', self.fototipo_edit),
+            ('envejecimiento', self.envejecimiento_edit),
+            ('diagnostico', self.diagnostico_edit),
+            ('plan_tratamiento', self.plan_tratamiento_edit),
+            ('rutina_am', self.rutina_am_edit),
+            ('rutina_pm', self.rutina_pm_edit),
+            ('recomendacion', self.recomendacion_edit),
+            ('proxima_cita', self.proxima_cita_edit)
+        ]:
+            format_btn = QPushButton("Formato")
+            format_btn.clicked.connect(lambda checked, f=field_name: self.show_format_dialog(f))
+            
+            # Create a container for the field and its format button
+            field_container = QWidget()
+            field_layout = QHBoxLayout()
+            field_layout.addWidget(field)
+            field_layout.addWidget(format_btn)
+            field_container.setLayout(field_layout)
+            
+            form_layout.addRow(f"{field_name.title()}:", field_container)
+        
+        # Store field styles
+        self.field_styles = {}
+        
+        # Connect text change signals for live preview
+        for field in [self.fecha_edit, self.paciente_edit, self.edad_edit,
+                      self.biotipo_edit, self.fototipo_edit, self.envejecimiento_edit,
+                      self.diagnostico_edit, self.plan_tratamiento_edit,
+                      self.rutina_am_edit, self.rutina_pm_edit,
+                      self.recomendacion_edit, self.proxima_cita_edit]:
+            if isinstance(field, QTextEdit):
+                field.textChanged.connect(self.update_preview)
+            elif isinstance(field, QLineEdit):
+                field.textChanged.connect(self.update_preview)
+            elif isinstance(field, QDateEdit):
+                field.dateChanged.connect(self.update_preview)
+            elif isinstance(field, QSpinBox):
+                field.valueChanged.connect(self.update_preview)
+            elif isinstance(field, QComboBox):
+                field.currentTextChanged.connect(self.update_preview)
+        
         form_group.setLayout(form_layout)
         
         # Action buttons
@@ -326,6 +441,9 @@ class MedicalRecipeEditor(QMainWindow):
         if file_path:
             self.template_pdf_path = file_path
             self.template_path_label.setText(os.path.basename(file_path))
+            
+            # Set the template path in the preview widget
+            self.pdf_preview.set_template_path(file_path)
             
             # Load the PDF for preview
             if self.pdf_preview.load_pdf(file_path):
@@ -381,7 +499,7 @@ class MedicalRecipeEditor(QMainWindow):
             overlay_pdf = self.create_overlay()
             
             # Merge template with overlay
-            self.merge_pdfs(self.template_pdf_path, overlay_pdf, save_path)
+            self.pdf_preview.merge_pdfs(self.template_pdf_path, overlay_pdf, save_path)
             
             QMessageBox.information(self, "Éxito", f"PDF guardado exitosamente en:\n{save_path}")
             
@@ -389,6 +507,10 @@ class MedicalRecipeEditor(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error al generar PDF: {str(e)}")
     
     def create_overlay(self):
+        # Check if working area is defined
+        if not self.working_area:
+            return None
+        
         # Create a temporary file for the overlay
         temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
         temp_file.close()
@@ -403,128 +525,173 @@ class MedicalRecipeEditor(QMainWindow):
         # Create a canvas with the same dimensions as the original PDF
         c = canvas.Canvas(temp_file.name, pagesize=(pdf_width, pdf_height))
         
-        # Set font and size
-        c.setFont("Helvetica", 10)
-        
         # Get the working area coordinates
         x_offset = self.working_area.x()
         y_offset = self.working_area.y()
         work_width = self.working_area.width()
         work_height = self.working_area.height()
         
-        # In PDF coordinates, y=0 is at the bottom, but in our selection y=0 is at the top
-        # So we need to flip the y-coordinate
+        # In PDF coordinates, y=0 is at the bottom
         y_offset = pdf_height - y_offset - work_height
         
         # Calculate positions relative to the working area
-        # We'll use a margin within the working area
         margin = 10  # 10 points margin
         x_pos = x_offset + margin
-        y_pos = y_offset + work_height - margin  # Start from top of working area
+        y_pos = y_offset + work_height - margin
         line_height = 14  # Height for each line of text
         
-        # Draw form data
-        # Format date
+        # Function to wrap text and handle page breaks
+        def draw_wrapped_text(text, y_pos, style=None):
+            if style:
+                font_name = style['font']
+                font_size = style['size']
+                if style.get('bold', False):
+                    font_name = f"{font_name}-Bold"
+                if style.get('italic', False):
+                    font_name = f"{font_name}-Italic"
+                if style.get('underline', False):
+                    font_name = f"{font_name}-Underline"
+                c.setFont(font_name, font_size)
+            else:
+                c.setFont("Helvetica", 10)
+                font_size = 10
+            
+            # Calculate available width for text
+            available_width = work_width - 2 * margin
+            
+            # Split text into words
+            words = text.split()
+            current_line = []
+            current_width = 0
+            
+            for word in words:
+                # Calculate word width with current font
+                word_width = c.stringWidth(word + " ", font_name, font_size)
+                
+                if current_width + word_width <= available_width:
+                    current_line.append(word)
+                    current_width += word_width
+                else:
+                    # Draw current line
+                    if y_pos < y_offset:  # If we're below the working area
+                        c.showPage()  # Create new page
+                        y_pos = y_offset + work_height - margin
+                    
+                    c.drawString(x_pos, y_pos, " ".join(current_line))
+                    y_pos -= line_height
+                    current_line = [word]
+                    current_width = word_width
+            
+            # Draw the last line
+            if current_line:
+                if y_pos < y_offset:
+                    c.showPage()
+                    y_pos = y_offset + work_height - margin
+                
+                c.drawString(x_pos, y_pos, " ".join(current_line))
+                y_pos -= line_height
+            
+            return y_pos
+        
+        # Draw form data with formatting
         fecha = self.fecha_edit.date().toString("dd/MM/yyyy")
-        c.drawString(x_pos, y_pos, f"Fecha: {fecha}")
-        y_pos -= line_height
+        y_pos = draw_wrapped_text(f"Fecha: {fecha}", y_pos, self.get_field_style('fecha'))
         
-        c.drawString(x_pos, y_pos, f"Paciente: {self.paciente_edit.text()}")
-        y_pos -= line_height
-        
-        c.drawString(x_pos, y_pos, f"Edad: {self.edad_edit.value()} años")
-        y_pos -= line_height
-        
-        c.drawString(x_pos, y_pos, f"Biotipo: {self.biotipo_edit.currentText()}")
-        y_pos -= line_height
-        
-        c.drawString(x_pos, y_pos, f"Fototipo: {self.fototipo_edit.currentText()}")
-        y_pos -= line_height
-        
-        c.drawString(x_pos, y_pos, f"Grado de envejecimiento: {self.envejecimiento_edit.currentText()}")
-        y_pos -= line_height * 1.5
-        
-        # Multiline text fields
-        c.drawString(x_pos, y_pos, "Diagnóstico:")
-        y_pos -= line_height
-        
-        diagnostico_lines = self.diagnostico_edit.toPlainText().split('\n')
-        for line in diagnostico_lines:
-            c.drawString(x_pos + 10, y_pos, line)
-            y_pos -= line_height
+        y_pos = draw_wrapped_text(f"Paciente: {self.paciente_edit.text()}", y_pos, self.get_field_style('paciente'))
+        y_pos = draw_wrapped_text(f"Edad: {self.edad_edit.value()} años", y_pos, self.get_field_style('edad'))
+        y_pos = draw_wrapped_text(f"Biotipo: {self.biotipo_edit.currentText()}", y_pos, self.get_field_style('biotipo'))
+        y_pos = draw_wrapped_text(f"Fototipo: {self.fototipo_edit.currentText()}", y_pos, self.get_field_style('fototipo'))
+        y_pos = draw_wrapped_text(f"Grado de envejecimiento: {self.envejecimiento_edit.currentText()}", 
+                                y_pos, self.get_field_style('envejecimiento'))
         
         y_pos -= line_height * 0.5
-        c.drawString(x_pos, y_pos, "Plan de tratamiento:")
-        y_pos -= line_height
+        y_pos = draw_wrapped_text("Diagnóstico:", y_pos, self.get_field_style('diagnostico_label'))
         
-        plan_lines = self.plan_tratamiento_edit.toPlainText().split('\n')
-        for line in plan_lines:
-            c.drawString(x_pos + 10, y_pos, line)
-            y_pos -= line_height
-        
-        y_pos -= line_height * 0.5
-        c.drawString(x_pos, y_pos, "Rutina Facial AM:")
-        y_pos -= line_height
-        
-        am_lines = self.rutina_am_edit.toPlainText().split('\n')
-        for line in am_lines:
-            c.drawString(x_pos + 10, y_pos, line)
-            y_pos -= line_height
-        
-        y_pos -= line_height * 0.5
-        c.drawString(x_pos, y_pos, "Rutina Facial PM:")
-        y_pos -= line_height
-        
-        pm_lines = self.rutina_pm_edit.toPlainText().split('\n')
-        for line in pm_lines:
-            c.drawString(x_pos + 10, y_pos, line)
-            y_pos -= line_height
-        
-        y_pos -= line_height * 0.5
-        c.drawString(x_pos, y_pos, "Recomendación Antiestres y Performance:")
-        y_pos -= line_height
-        
-        recom_lines = self.recomendacion_edit.toPlainText().split('\n')
-        for line in recom_lines:
-            c.drawString(x_pos + 10, y_pos, line)
-            y_pos -= line_height
-        
-        y_pos -= line_height * 0.5
-        proxima_cita = self.proxima_cita_edit.date().toString("dd/MM/yyyy")
-        c.drawString(x_pos, y_pos, f"Próxima cita médica: {proxima_cita}")
-        
-        # Optional: Draw a border around the working area for debugging
-        # c.rect(x_offset, y_offset, work_width, work_height)
+        for line in self.diagnostico_edit.toPlainText().split('\n'):
+            y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('diagnostico'))
         
         c.save()
         return temp_file.name
     
-    def merge_pdfs(self, template_path, overlay_path, output_path):
-        # Read the template PDF
-        template_pdf = PdfReader(template_path)
+    def show_format_dialog(self, field_name):
+        dialog = TextFormatDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.field_styles[field_name] = dialog.get_format()
+            self.update_preview()
+
+    def get_field_style(self, field_name):
+        return self.field_styles.get(field_name, {
+            'font': 'Helvetica',
+            'size': 10,
+            'bold': False,
+            'italic': False,
+            'underline': False
+        })
+
+    def update_preview(self):
+        # Only update preview if we have a working area defined
+        if not self.working_area:
+            return
         
-        # Read the overlay PDF
-        overlay_pdf = PdfReader(overlay_path)
-        
-        # Create a PDF writer
-        output = PdfWriter()
-        
-        # Merge pages
-        for i in range(len(template_pdf.pages)):
-            template_page = template_pdf.pages[i]
+        try:
+            # Create a temporary overlay with current content
+            overlay_pdf = self.create_overlay()
             
-            # If we have an overlay page for this template page
-            if i < len(overlay_pdf.pages):
-                template_page.merge_page(overlay_pdf.pages[i])
-            
-            output.add_page(template_page)
+            if overlay_pdf:
+                # Update the preview with the new overlay
+                self.pdf_preview.update_with_overlay(overlay_pdf)
+        except Exception as e:
+            print(f"Error updating preview: {e}")
+
+class TextFormatDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.initUI()
         
-        # Write the output PDF
-        with open(output_path, 'wb') as output_file:
-            output.write(output_file)
+    def initUI(self):
+        self.setWindowTitle("Formato de Texto")
+        layout = QFormLayout()
         
-        # Clean up the temporary overlay file
-        os.unlink(overlay_path)
+        # Font selection
+        self.font_combo = QFontComboBox()
+        layout.addRow("Fuente:", self.font_combo)
+        
+        # Font size
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(8, 72)
+        self.size_spin.setValue(10)
+        layout.addRow("Tamaño:", self.size_spin)
+        
+        # Style options
+        self.bold_check = QCheckBox("Negrita")
+        self.italic_check = QCheckBox("Cursiva")
+        self.underline_check = QCheckBox("Subrayado")
+        
+        style_layout = QHBoxLayout()
+        style_layout.addWidget(self.bold_check)
+        style_layout.addWidget(self.italic_check)
+        style_layout.addWidget(self.underline_check)
+        layout.addRow("Estilo:", style_layout)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        
+        self.setLayout(layout)
+    
+    def get_format(self):
+        return {
+            'font': self.font_combo.currentFont().family(),
+            'size': self.size_spin.value(),
+            'bold': self.bold_check.isChecked(),
+            'italic': self.italic_check.isChecked(),
+            'underline': self.underline_check.isChecked()
+        }
 
 def main():
     app = QApplication(sys.argv)
