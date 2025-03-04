@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QDateEdit, QSpinBox, QComboBox, QMessageBox,
                             QScrollArea, QFrame, QSizePolicy, QDialog,
                             QDialogButtonBox, QFontComboBox, QCheckBox)
-from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF
+from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF, QTimer
 from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen
 from PyQt6.QtPrintSupport import QPrinter
 
@@ -34,6 +34,66 @@ class PDFPreviewWidget(QWidget):
         self.setMinimumSize(400, 500)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
+        
+        # Create a container widget for the preview and navigation
+        self.container = QWidget()
+        self.container_layout = QVBoxLayout(self.container)
+        
+        # Create preview widget
+        self.preview_widget = QWidget()
+        self.preview_widget.setMinimumSize(400, 500)
+        self.preview_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        # Create navigation panel with better styling
+        nav_panel = QWidget()
+        nav_layout = QHBoxLayout(nav_panel)
+        
+        self.prev_page_btn = QPushButton("←")
+        self.next_page_btn = QPushButton("→")
+        self.page_label = QLabel("Página 1")
+        
+        # Style the navigation buttons
+        button_style = """
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 3px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """
+        self.prev_page_btn.setStyleSheet(button_style)
+        self.next_page_btn.setStyleSheet(button_style)
+        self.prev_page_btn.setFixedSize(40, 30)
+        self.next_page_btn.setFixedSize(40, 30)
+        self.page_label.setStyleSheet("QLabel { padding: 0 10px; }")
+        
+        self.prev_page_btn.clicked.connect(self.prev_page)
+        self.next_page_btn.clicked.connect(self.next_page)
+        
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.prev_page_btn)
+        nav_layout.addWidget(self.page_label)
+        nav_layout.addWidget(self.next_page_btn)
+        nav_layout.addStretch()
+        
+        # Add widgets to container layout
+        self.container_layout.addWidget(nav_panel)
+        self.container_layout.addWidget(self.preview_widget)
+        
+        # Set main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(self.container)
+        self.setLayout(main_layout)
+        
+        self.update_navigation()
         
     def load_pdf(self, path):
         try:
@@ -114,6 +174,11 @@ class PDFPreviewWidget(QWidget):
         painter.fillRect(event.rect(), Qt.GlobalColor.white)
         
         if self.pixmap:
+            # Calculate the PDF rectangle in widget coordinates
+            x = (self.width() - self.pixmap.width()) / 2
+            y = (self.height() - self.pixmap.height()) / 2
+            self.pdf_rect = QRect(int(x), int(y), self.pixmap.width(), self.pixmap.height())
+            
             # Draw the PDF preview centered
             painter.drawPixmap(self.pdf_rect, self.pixmap)
             
@@ -200,6 +265,12 @@ class PDFPreviewWidget(QWidget):
             # Clean up
             os.unlink(temp_merged.name)
             
+            # Update navigation buttons
+            self.update_navigation()
+            
+            # Force a repaint
+            self.update()
+            
         except Exception as e:
             print(f"Error updating preview: {e}")
 
@@ -209,18 +280,21 @@ class PDFPreviewWidget(QWidget):
     def merge_pdfs(self, template_path, overlay_path, output_path):
         # Read the template PDF
         template_pdf = PdfReader(template_path)
-        
-        # Read the overlay PDF
         overlay_pdf = PdfReader(overlay_path)
-        
-        # Create a PDF writer
         output = PdfWriter()
         
-        # Merge pages
-        for i in range(len(template_pdf.pages)):
-            template_page = template_pdf.pages[i]
+        # Get the number of pages needed
+        num_pages = max(len(template_pdf.pages), len(overlay_pdf.pages))
+        
+        # For each page
+        for i in range(num_pages):
+            # If we need more template pages, copy the first page
+            if i < len(template_pdf.pages):
+                template_page = template_pdf.pages[i]
+            else:
+                template_page = template_pdf.pages[0]
             
-            # If we have an overlay page for this template page
+            # If we have an overlay page, merge it
             if i < len(overlay_pdf.pages):
                 template_page.merge_page(overlay_pdf.pages[i])
             
@@ -230,11 +304,202 @@ class PDFPreviewWidget(QWidget):
         with open(output_path, 'wb') as output_file:
             output.write(output_file)
 
+    def prev_page(self):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_preview()
+            self.update_navigation()
+    
+    def next_page(self):
+        if self.pdf_document and self.current_page < len(self.pdf_document) - 1:
+            self.current_page += 1
+            self.update_preview()
+            self.update_navigation()
+    
+    def update_navigation(self):
+        if self.pdf_document:
+            total_pages = len(self.pdf_document)
+            self.page_label.setText(f"Página {self.current_page + 1} de {total_pages}")
+            self.prev_page_btn.setEnabled(self.current_page > 0)
+            self.next_page_btn.setEnabled(self.current_page < total_pages - 1)
+        else:
+            self.page_label.setText("Sin documento")
+            self.prev_page_btn.setEnabled(False)
+            self.next_page_btn.setEnabled(False)
+
+    def create_overlay(self):
+        if not self.pdf_document:
+            return None
+        
+        try:
+            # Create a temporary file for the overlay
+            temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            temp_file.close()
+            
+            # Get the dimensions of the original PDF to match it exactly
+            original_pdf = fitz.open(self.template_pdf_path)
+            page = original_pdf[0]
+            pdf_width = page.rect.width
+            pdf_height = page.rect.height
+            original_pdf.close()
+            
+            # Create a canvas with the same dimensions as the original PDF
+            c = canvas.Canvas(temp_file.name, pagesize=(pdf_width, pdf_height))
+            
+            # Get the working area coordinates
+            x_offset = self.working_area.x()
+            y_offset = self.working_area.y()
+            work_width = self.working_area.width()
+            work_height = self.working_area.height()
+            
+            # In PDF coordinates, y=0 is at the bottom
+            y_offset = pdf_height - y_offset - work_height
+            
+            # Calculate positions relative to the working area
+            margin = 10  # 10 points margin
+            x_pos = x_offset + margin
+            y_pos = y_offset + work_height - margin
+            line_height = 14  # Height for each line of text
+            
+            # Function to create a new page with the same template
+            def create_new_page():
+                c.showPage()
+                # Set up the new page with the same dimensions
+                c.setPageSize((pdf_width, pdf_height))
+                # Reset the position to the top of the working area
+                return y_offset + work_height - margin
+            
+            # Function to draw section header
+            def draw_section_header(text, y_pos, style=None):
+                if style:
+                    c.setFont(style['font'], style['size'])
+                else:
+                    c.setFont("Helvetica-Bold", 12)
+                c.drawString(x_pos, y_pos, text)
+                return y_pos - line_height * 1.5
+            
+            # Function to wrap text and handle page breaks
+            def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
+                if style:
+                    font_name = style['font']
+                    font_size = style['size']
+                    if style.get('bold', False):
+                        font_name = f"{font_name}-Bold"
+                    if style.get('italic', False):
+                        font_name = f"{font_name}-Italic"
+                    if style.get('underline', False):
+                        font_name = f"{font_name}-Underline"
+                    c.setFont(font_name, font_size)
+                else:
+                    c.setFont("Helvetica", 10)
+                    font_size = 10
+                
+                # Calculate available width for text
+                available_width = work_width - 2 * margin
+                
+                # Split text into words
+                words = text.split()
+                current_line = []
+                current_width = 0
+                
+                for word in words:
+                    word_width = c.stringWidth(word + " ", font_name, font_size)
+                    
+                    if current_width + word_width <= available_width:
+                        current_line.append(word)
+                        current_width += word_width
+                    else:
+                        # Check if we need a new page
+                        if y_pos - line_height < y_offset:
+                            y_pos = create_new_page()
+                            # If this is part of a section, redraw the section header
+                            if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
+                                                                      "Rutina Facial", "Recomendación")):
+                                y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
+                        
+                        # Draw current line
+                        c.drawString(x_pos, y_pos, " ".join(current_line))
+                        y_pos -= line_height
+                        current_line = [word]
+                        current_width = word_width
+                
+                # Draw the last line
+                if current_line:
+                    if y_pos - line_height < y_offset:
+                        y_pos = create_new_page()
+                        if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
+                                                                  "Rutina Facial", "Recomendación")):
+                            y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
+                        
+                    c.drawString(x_pos, y_pos, " ".join(current_line))
+                    y_pos -= line_height
+                
+                return y_pos
+            
+            # Draw form data with formatting
+            fecha = self.fecha_edit.date().toString("dd/MM/yyyy")
+            y_pos = draw_wrapped_text(f"Fecha: {fecha}", y_pos, self.get_field_style('fecha'))
+            
+            y_pos = draw_wrapped_text(f"Paciente: {self.paciente_edit.text()}", y_pos, self.get_field_style('paciente'))
+            y_pos = draw_wrapped_text(f"Edad: {self.edad_edit.value()} años", y_pos, self.get_field_style('edad'))
+            y_pos = draw_wrapped_text(f"Biotipo: {self.biotipo_edit.currentText()}", y_pos, self.get_field_style('biotipo'))
+            y_pos = draw_wrapped_text(f"Fototipo: {self.fototipo_edit.currentText()}", y_pos, self.get_field_style('fototipo'))
+            y_pos = draw_wrapped_text(f"Grado de envejecimiento: {self.envejecimiento_edit.currentText()}", 
+                                    y_pos, self.get_field_style('envejecimiento'))
+            
+            y_pos -= line_height * 0.5
+            y_pos = draw_wrapped_text("Diagnóstico:", y_pos, self.get_field_style('diagnostico_label'))
+            
+            for line in self.diagnostico_edit.toPlainText().split('\n'):
+                if line.strip():  # Only process non-empty lines
+                    y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('diagnostico'))
+            
+            y_pos -= line_height * 0.5
+            y_pos = draw_wrapped_text("Plan de tratamiento:", y_pos, self.get_field_style('plan_tratamiento_label'))
+            
+            for line in self.plan_tratamiento_edit.toPlainText().split('\n'):
+                if line.strip():  # Only process non-empty lines
+                    y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('plan_tratamiento'))
+            
+            y_pos -= line_height * 0.5
+            y_pos = draw_wrapped_text("Rutina Facial (AM):", y_pos, self.get_field_style('rutina_am_label'))
+            
+            for line in self.rutina_am_edit.toPlainText().split('\n'):
+                if line.strip():  # Only process non-empty lines
+                    y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('rutina_am'))
+            
+            y_pos -= line_height * 0.5
+            y_pos = draw_wrapped_text("Rutina Facial (PM):", y_pos, self.get_field_style('rutina_pm_label'))
+            
+            for line in self.rutina_pm_edit.toPlainText().split('\n'):
+                if line.strip():  # Only process non-empty lines
+                    y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('rutina_pm'))
+            
+            y_pos -= line_height * 0.5
+            y_pos = draw_wrapped_text("Recomendación Antiestres y Performance:", y_pos, self.get_field_style('recomendacion_label'))
+            
+            for line in self.recomendacion_edit.toPlainText().split('\n'):
+                if line.strip():  # Only process non-empty lines
+                    y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('recomendacion'))
+            
+            y_pos -= line_height * 0.5
+            proxima_cita = self.proxima_cita_edit.date().toString("dd/MM/yyyy")
+            y_pos = draw_wrapped_text(f"Próxima cita médica: {proxima_cita}", y_pos, self.get_field_style('proxima_cita'))
+            
+            c.save()
+            return temp_file.name
+        except Exception as e:
+            print(f"Error creating overlay: {e}")
+            return None
+
 class MedicalRecipeEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.template_pdf_path = None
         self.working_area = None
+        self.preview_timer = QTimer()
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.timeout.connect(self._do_update_preview)
         self.initUI()
         
     def initUI(self):
@@ -540,8 +805,25 @@ class MedicalRecipeEditor(QMainWindow):
         y_pos = y_offset + work_height - margin
         line_height = 14  # Height for each line of text
         
+        # Function to create a new page with the same template
+        def create_new_page():
+            c.showPage()
+            # Set up the new page with the same dimensions
+            c.setPageSize((pdf_width, pdf_height))
+            # Reset the position to the top of the working area
+            return y_offset + work_height - margin
+        
+        # Function to draw section header
+        def draw_section_header(text, y_pos, style=None):
+            if style:
+                c.setFont(style['font'], style['size'])
+            else:
+                c.setFont("Helvetica-Bold", 12)
+            c.drawString(x_pos, y_pos, text)
+            return y_pos - line_height * 1.5
+        
         # Function to wrap text and handle page breaks
-        def draw_wrapped_text(text, y_pos, style=None):
+        def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
             if style:
                 font_name = style['font']
                 font_size = style['size']
@@ -565,18 +847,21 @@ class MedicalRecipeEditor(QMainWindow):
             current_width = 0
             
             for word in words:
-                # Calculate word width with current font
                 word_width = c.stringWidth(word + " ", font_name, font_size)
                 
                 if current_width + word_width <= available_width:
                     current_line.append(word)
                     current_width += word_width
                 else:
-                    # Draw current line
-                    if y_pos < y_offset:  # If we're below the working area
-                        c.showPage()  # Create new page
-                        y_pos = y_offset + work_height - margin
+                    # Check if we need a new page
+                    if y_pos - line_height < y_offset:
+                        y_pos = create_new_page()
+                        # If this is part of a section, redraw the section header
+                        if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
+                                                                  "Rutina Facial", "Recomendación")):
+                            y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
                     
+                    # Draw current line
                     c.drawString(x_pos, y_pos, " ".join(current_line))
                     y_pos -= line_height
                     current_line = [word]
@@ -584,9 +869,11 @@ class MedicalRecipeEditor(QMainWindow):
             
             # Draw the last line
             if current_line:
-                if y_pos < y_offset:
-                    c.showPage()
-                    y_pos = y_offset + work_height - margin
+                if y_pos - line_height < y_offset:
+                    y_pos = create_new_page()
+                    if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
+                                                              "Rutina Facial", "Recomendación")):
+                        y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
                 
                 c.drawString(x_pos, y_pos, " ".join(current_line))
                 y_pos -= line_height
@@ -608,7 +895,40 @@ class MedicalRecipeEditor(QMainWindow):
         y_pos = draw_wrapped_text("Diagnóstico:", y_pos, self.get_field_style('diagnostico_label'))
         
         for line in self.diagnostico_edit.toPlainText().split('\n'):
-            y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('diagnostico'))
+            if line.strip():  # Only process non-empty lines
+                y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('diagnostico'))
+        
+        y_pos -= line_height * 0.5
+        y_pos = draw_wrapped_text("Plan de tratamiento:", y_pos, self.get_field_style('plan_tratamiento_label'))
+        
+        for line in self.plan_tratamiento_edit.toPlainText().split('\n'):
+            if line.strip():  # Only process non-empty lines
+                y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('plan_tratamiento'))
+        
+        y_pos -= line_height * 0.5
+        y_pos = draw_wrapped_text("Rutina Facial (AM):", y_pos, self.get_field_style('rutina_am_label'))
+        
+        for line in self.rutina_am_edit.toPlainText().split('\n'):
+            if line.strip():  # Only process non-empty lines
+                y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('rutina_am'))
+        
+        y_pos -= line_height * 0.5
+        y_pos = draw_wrapped_text("Rutina Facial (PM):", y_pos, self.get_field_style('rutina_pm_label'))
+        
+        for line in self.rutina_pm_edit.toPlainText().split('\n'):
+            if line.strip():  # Only process non-empty lines
+                y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('rutina_pm'))
+        
+        y_pos -= line_height * 0.5
+        y_pos = draw_wrapped_text("Recomendación Antiestres y Performance:", y_pos, self.get_field_style('recomendacion_label'))
+        
+        for line in self.recomendacion_edit.toPlainText().split('\n'):
+            if line.strip():  # Only process non-empty lines
+                y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('recomendacion'))
+        
+        y_pos -= line_height * 0.5
+        proxima_cita = self.proxima_cita_edit.date().toString("dd/MM/yyyy")
+        y_pos = draw_wrapped_text(f"Próxima cita médica: {proxima_cita}", y_pos, self.get_field_style('proxima_cita'))
         
         c.save()
         return temp_file.name
@@ -629,6 +949,12 @@ class MedicalRecipeEditor(QMainWindow):
         })
 
     def update_preview(self):
+        # Reset the timer
+        self.preview_timer.stop()
+        # Start the timer (500ms delay)
+        self.preview_timer.start(500)
+    
+    def _do_update_preview(self):
         # Only update preview if we have a working area defined
         if not self.working_area:
             return
