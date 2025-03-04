@@ -7,9 +7,10 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QPushButton, QFileDialog, QFormLayout, QGroupBox,
                             QDateEdit, QSpinBox, QComboBox, QMessageBox,
                             QScrollArea, QFrame, QSizePolicy, QDialog,
-                            QDialogButtonBox, QFontComboBox, QCheckBox)
-from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF, QTimer
-from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen
+                            QDialogButtonBox, QFontComboBox, QCheckBox,
+                            QToolBar, QToolButton)
+from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF, QTimer, QSize
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen, QIcon, QFont, QAction
 from PyQt6.QtPrintSupport import QPrinter
 
 # Since PyQt6-PDF doesn't exist, let's use an alternative approach
@@ -386,19 +387,36 @@ class PDFPreviewWidget(QWidget):
             
             # Function to wrap text and handle page breaks
             def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
+                # Store the original style to reapply after page breaks
+                original_style = style
+                
                 if style:
                     font_name = style['font']
                     font_size = style['size']
+                    
+                    # Check if the font is available in ReportLab's standard fonts
+                    standard_fonts = ['Helvetica', 'Times-Roman', 'Courier', 'Symbol', 'ZapfDingbats']
+                    
+                    # If the font is not a standard font, fall back to Helvetica
+                    if font_name not in standard_fonts:
+                        font_name = 'Helvetica'
+                        
+                    # Apply styling
                     if style.get('bold', False):
-                        font_name = f"{font_name}-Bold"
+                        if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                            font_name = f"{font_name}-Bold"
                     if style.get('italic', False):
-                        font_name = f"{font_name}-Italic"
-                    if style.get('underline', False):
-                        font_name = f"{font_name}-Underline"
+                        if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                            font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
+                        
+                    # Note: ReportLab doesn't support underline directly in font names
+                    # We'll handle underline separately if needed
+                        
                     c.setFont(font_name, font_size)
                 else:
-                    c.setFont("Helvetica", 10)
-                    font_size = 10
+                    font_name = "Helvetica"
+                    font_size = self.DEFAULT_FONT_SIZE
+                    c.setFont(font_name, font_size)
                 
                 # Calculate available width for text
                 available_width = work_width - 2 * margin
@@ -418,11 +436,18 @@ class PDFPreviewWidget(QWidget):
                         # Check if we need a new page
                         if y_pos - line_height < y_offset:
                             y_pos = create_new_page()
-                            # If this is part of a section, redraw the section header
-                            if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
-                                                                      "Rutina Facial", "Recomendación")):
-                                y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
-                        
+                            # Reapply the original style after page break
+                            if original_style:
+                                font_name = original_style['font']
+                                font_size = original_style['size']
+                                if original_style.get('bold', False):
+                                    font_name = f"{font_name}-Bold"
+                                if original_style.get('italic', False):
+                                    font_name = f"{font_name}-Italic"
+                                if original_style.get('underline', False):
+                                    font_name = f"{font_name}-Underline"
+                                c.setFont(font_name, font_size)
+                            
                         # Draw current line
                         c.drawString(x_pos, y_pos, " ".join(current_line))
                         y_pos -= line_height
@@ -433,25 +458,55 @@ class PDFPreviewWidget(QWidget):
                 if current_line:
                     if y_pos - line_height < y_offset:
                         y_pos = create_new_page()
-                        if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
-                                                                  "Rutina Facial", "Recomendación")):
-                            y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
+                        # Reapply the original style after page break
+                        if original_style:
+                            font_name = original_style['font']
+                            font_size = original_style['size']
+                            if original_style.get('bold', False):
+                                font_name = f"{font_name}-Bold"
+                            if original_style.get('italic', False):
+                                font_name = f"{font_name}-Italic"
+                            if original_style.get('underline', False):
+                                font_name = f"{font_name}-Underline"
+                            c.setFont(font_name, font_size)
                         
                     c.drawString(x_pos, y_pos, " ".join(current_line))
                     y_pos -= line_height
                 
                 return y_pos
             
-            # Draw form data with formatting
-            fecha = self.fecha_edit.date().toString("dd/MM/yyyy")
-            y_pos = draw_wrapped_text(f"Fecha: {fecha}", y_pos, self.get_field_style('fecha'))
+            # Draw form data with formatting - make labels bold but content regular
+            fecha = self.format_date_spanish(self.fecha_edit.date())
+            # For each field, split the label and content
+            fecha_label_style = self.get_field_style('fecha_label')
+            fecha_content_style = self.get_field_style('fecha')
+            c.setFont(fecha_label_style['font'] + ("-Bold" if fecha_label_style.get('bold', True) else ""), fecha_label_style['size'])
+            c.drawString(x_pos, y_pos, "Fecha: ")
+            label_width = c.stringWidth("Fecha: ", fecha_label_style['font'] + ("-Bold" if fecha_label_style.get('bold', True) else ""), fecha_label_style['size'])
+            c.setFont(fecha_content_style['font'] + ("-Bold" if fecha_content_style.get('bold', False) else ""), fecha_content_style['size'])
+            c.drawString(x_pos + label_width, y_pos, fecha)
+            y_pos -= line_height
             
-            y_pos = draw_wrapped_text(f"Paciente: {self.paciente_edit.text()}", y_pos, self.get_field_style('paciente'))
-            y_pos = draw_wrapped_text(f"Edad: {self.edad_edit.value()} años", y_pos, self.get_field_style('edad'))
-            y_pos = draw_wrapped_text(f"Biotipo: {self.biotipo_edit.currentText()}", y_pos, self.get_field_style('biotipo'))
-            y_pos = draw_wrapped_text(f"Fototipo: {self.fototipo_edit.currentText()}", y_pos, self.get_field_style('fototipo'))
-            y_pos = draw_wrapped_text(f"Grado de envejecimiento: {self.envejecimiento_edit.currentText()}", 
-                                    y_pos, self.get_field_style('envejecimiento'))
+            # Apply the same pattern for other basic fields
+            fields = [
+                ("Paciente: ", self.paciente_edit.text(), 'paciente_label', 'paciente'),
+                (f"Edad: ", f"{self.edad_edit.value()} años", 'edad_label', 'edad'),
+                ("Biotipo: ", self.biotipo_edit.currentText(), 'biotipo_label', 'biotipo'),
+                ("Fototipo: ", self.fototipo_edit.currentText(), 'fototipo_label', 'fototipo'),
+                ("Grado de envejecimiento: ", self.envejecimiento_edit.currentText(), 'envejecimiento_label', 'envejecimiento')
+            ]
+            
+            for label_text, content_text, label_style_name, content_style_name in fields:
+                label_style = self.get_field_style(label_style_name)
+                content_style = self.get_field_style(content_style_name)
+                
+                c.setFont(label_style['font'] + ("-Bold" if label_style.get('bold', True) else ""), label_style['size'])
+                c.drawString(x_pos, y_pos, label_text)
+                label_width = c.stringWidth(label_text, label_style['font'] + ("-Bold" if label_style.get('bold', True) else ""), label_style['size'])
+                
+                c.setFont(content_style['font'] + ("-Bold" if content_style.get('bold', False) else ""), content_style['size'])
+                c.drawString(x_pos + label_width, y_pos, content_text)
+                y_pos -= line_height
             
             y_pos -= line_height * 0.5
             y_pos = draw_wrapped_text("Diagnóstico:", y_pos, self.get_field_style('diagnostico_label'))
@@ -498,6 +553,56 @@ class PDFPreviewWidget(QWidget):
             print(f"Error creating overlay: {e}")
             return None
 
+    def format_date_spanish(self, qdate):
+        """Format date in Spanish: 'Riobamba, 4 de marzo de 2025'"""
+        day = qdate.day()
+        month = qdate.month()
+        year = qdate.year()
+        
+        # Spanish month names
+        months = {
+            1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+            5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+            9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+        }
+        
+        # Format the date
+        return f"Riobamba, {day} de {months[month]} de {year}"
+
+    def get_field_style(self, field_name):
+        # Adjust the DEFAULT_FONT_SIZE to appear correctly in the PDF
+        # PDF points are typically 1/72 inch, so we might need to adjust
+        adjusted_size = self.DEFAULT_FONT_SIZE * 0.9  # Slightly reduce size to match visual expectations
+        
+        # Default styles based on field type
+        if field_name.endswith('_label'):
+            # All labels (section headers and field labels) should be consistent
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': True,  # All labels are bold
+                'italic': False,
+                'underline': False
+            })
+        elif field_name in ['fecha', 'paciente', 'edad', 'biotipo', 'fototipo', 'envejecimiento', 'proxima_cita']:
+            # Basic info fields content (not bold)
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': False,  # Content is not bold
+                'italic': False,
+                'underline': False
+            })
+        else:
+            # Content fields (diagnostico, plan_tratamiento, etc.)
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': False,
+                'italic': False,
+                'underline': False
+            })
+
 class MedicalRecipeEditor(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -506,6 +611,10 @@ class MedicalRecipeEditor(QMainWindow):
         self.preview_timer = QTimer()
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._do_update_preview)
+        
+        # Global font size setting
+        self.DEFAULT_FONT_SIZE = 9
+        
         self.initUI()
         
     def initUI(self):
@@ -571,85 +680,187 @@ class MedicalRecipeEditor(QMainWindow):
         # Form fields
         form_group = QGroupBox("Datos de la Receta")
         form_layout = QFormLayout()
+        form_layout.setSpacing(10)  # Add more spacing between form rows
+        
+        # Create a function to add a field with formatting toolbar
+        def add_field_with_formatting(label, field, field_name):
+            container = QWidget()
+            layout = QVBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(2)
+            
+            # Add the field
+            layout.addWidget(field)
+            
+            # Create formatting toolbar
+            toolbar = QToolBar()
+            toolbar.setIconSize(QSize(16, 16))
+            toolbar.setStyleSheet("""
+                QToolBar {
+                    background-color: #f5f5f5;
+                    border: 1px solid #ddd;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+                QToolButton {
+                    border: none;
+                    padding: 3px;
+                    border-radius: 2px;
+                }
+                QToolButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QToolButton:checked {
+                    background-color: #d0d0d0;
+                }
+            """)
+            
+            # Only add font controls for text fields
+            if isinstance(field, QTextEdit) or isinstance(field, QLineEdit):
+                font_combo = QFontComboBox()
+                font_combo.clear()  # Clear all fonts
+                
+                # Add only the fonts that ReportLab supports by default
+                reportlab_fonts = ['Helvetica', 'Times-Roman', 'Courier']
+                for font in reportlab_fonts:
+                    font_combo.addItem(font)
+                
+                font_combo.setCurrentText("Helvetica")
+                font_combo.setMaximumWidth(150)
+                font_combo.currentTextChanged.connect(  # Use currentTextChanged instead of currentFontChanged
+                    lambda text: self.apply_format(field_name, 'font', text))
+                toolbar.addWidget(font_combo)
+                
+                # Font size selector
+                size_spin = QSpinBox()
+                size_spin.setRange(8, 24)
+                size_spin.setValue(self.DEFAULT_FONT_SIZE)
+                size_spin.setMaximumWidth(50)
+                size_spin.valueChanged.connect(
+                    lambda size: self.apply_format(field_name, 'size', size))
+                toolbar.addWidget(size_spin)
+                
+                # Add separator
+                toolbar.addSeparator()
+            
+            # Bold button
+            bold_action = QAction("B", toolbar)
+            bold_action.setCheckable(True)
+            bold_action.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+            bold_action.triggered.connect(
+                lambda checked: self.apply_format(field_name, 'bold', checked))
+            toolbar.addAction(bold_action)
+            
+            # Italic button
+            italic_action = QAction("I", toolbar)
+            italic_action.setCheckable(True)
+            italic_action.setFont(QFont("Helvetica", 9, QFont.Weight.Normal, True))
+            italic_action.triggered.connect(
+                lambda checked: self.apply_format(field_name, 'italic', checked))
+            toolbar.addAction(italic_action)
+            
+            # Underline button
+            underline_action = QAction("U", toolbar)
+            underline_action.setCheckable(True)
+            font = QFont("Helvetica", 9)
+            font.setUnderline(True)
+            underline_action.setFont(font)
+            underline_action.triggered.connect(
+                lambda checked: self.apply_format(field_name, 'underline', checked))
+            toolbar.addAction(underline_action)
+            
+            # Add toolbar to layout
+            layout.addWidget(toolbar)
+            
+            # Add to form layout
+            form_layout.addRow(label, container)
+            
+            # Store the formatting controls for later access
+            self.formatting_controls[field_name] = {
+                'bold': bold_action,
+                'italic': italic_action,
+                'underline': underline_action
+            }
+            
+            if isinstance(field, QTextEdit) or isinstance(field, QLineEdit):
+                self.formatting_controls[field_name]['font_combo'] = font_combo
+                self.formatting_controls[field_name]['size_spin'] = size_spin
+        
+        # Initialize formatting controls dictionary
+        self.formatting_controls = {}
         
         # Date field
         self.fecha_edit = QDateEdit()
         self.fecha_edit.setDate(QDate.currentDate())
         self.fecha_edit.setCalendarPopup(True)
-        form_layout.addRow("Fecha:", self.fecha_edit)
+        add_field_with_formatting("Fecha:", self.fecha_edit, 'fecha')
         
         # Patient info
         self.paciente_edit = QLineEdit()
-        form_layout.addRow("Paciente:", self.paciente_edit)
+        add_field_with_formatting("Paciente:", self.paciente_edit, 'paciente')
         
         self.edad_edit = QSpinBox()
         self.edad_edit.setRange(0, 120)
-        form_layout.addRow("Edad:", self.edad_edit)
+        add_field_with_formatting("Edad:", self.edad_edit, 'edad')
         
         # Patient characteristics
         self.biotipo_edit = QComboBox()
         self.biotipo_edit.addItems(["Normolíneo", "Brevilíneo", "Longilíneo"])
-        form_layout.addRow("Biotipo:", self.biotipo_edit)
+        add_field_with_formatting("Biotipo:", self.biotipo_edit, 'biotipo')
         
         self.fototipo_edit = QComboBox()
         self.fototipo_edit.addItems(["I", "II", "III", "IV", "V", "VI"])
-        form_layout.addRow("Fototipo:", self.fototipo_edit)
+        add_field_with_formatting("Fototipo:", self.fototipo_edit, 'fototipo')
         
         self.envejecimiento_edit = QComboBox()
         self.envejecimiento_edit.addItems(["Leve", "Moderado", "Avanzado"])
-        form_layout.addRow("Grado de envejecimiento:", self.envejecimiento_edit)
+        add_field_with_formatting("Grado de envejecimiento:", self.envejecimiento_edit, 'envejecimiento')
         
-        # Medical info
+        # Medical info - make text fields bigger
         self.diagnostico_edit = QTextEdit()
-        form_layout.addRow("Diagnóstico:", self.diagnostico_edit)
+        self.diagnostico_edit.setMinimumHeight(120)  # Taller text area
+        add_field_with_formatting("Diagnóstico:", self.diagnostico_edit, 'diagnostico')
         
         self.plan_tratamiento_edit = QTextEdit()
-        form_layout.addRow("Plan de tratamiento:", self.plan_tratamiento_edit)
+        self.plan_tratamiento_edit.setMinimumHeight(120)
+        add_field_with_formatting("Plan de tratamiento:", self.plan_tratamiento_edit, 'plan_tratamiento')
         
         self.rutina_am_edit = QTextEdit()
-        form_layout.addRow("Rutina Facial (AM):", self.rutina_am_edit)
+        self.rutina_am_edit.setMinimumHeight(120)
+        add_field_with_formatting("Rutina Facial (AM):", self.rutina_am_edit, 'rutina_am')
         
         self.rutina_pm_edit = QTextEdit()
-        form_layout.addRow("Rutina Facial (PM):", self.rutina_pm_edit)
+        self.rutina_pm_edit.setMinimumHeight(120)
+        add_field_with_formatting("Rutina Facial (PM):", self.rutina_pm_edit, 'rutina_pm')
         
         self.recomendacion_edit = QTextEdit()
-        form_layout.addRow("Recomendación Antiestres y Performance:", self.recomendacion_edit)
+        self.recomendacion_edit.setMinimumHeight(120)
+        add_field_with_formatting("Recomendación Antiestres y Performance:", self.recomendacion_edit, 'recomendacion')
         
         # Next appointment
         self.proxima_cita_edit = QDateEdit()
         self.proxima_cita_edit.setDate(QDate.currentDate().addDays(30))
         self.proxima_cita_edit.setCalendarPopup(True)
-        form_layout.addRow("Próxima cita médica:", self.proxima_cita_edit)
-        
-        # Add formatting button to each text field
-        for field_name, field in [
-            ('fecha', self.fecha_edit),
-            ('paciente', self.paciente_edit),
-            ('edad', self.edad_edit),
-            ('biotipo', self.biotipo_edit),
-            ('fototipo', self.fototipo_edit),
-            ('envejecimiento', self.envejecimiento_edit),
-            ('diagnostico', self.diagnostico_edit),
-            ('plan_tratamiento', self.plan_tratamiento_edit),
-            ('rutina_am', self.rutina_am_edit),
-            ('rutina_pm', self.rutina_pm_edit),
-            ('recomendacion', self.recomendacion_edit),
-            ('proxima_cita', self.proxima_cita_edit)
-        ]:
-            format_btn = QPushButton("Formato")
-            format_btn.clicked.connect(lambda checked, f=field_name: self.show_format_dialog(f))
-            
-            # Create a container for the field and its format button
-            field_container = QWidget()
-            field_layout = QHBoxLayout()
-            field_layout.addWidget(field)
-            field_layout.addWidget(format_btn)
-            field_container.setLayout(field_layout)
-            
-            form_layout.addRow(f"{field_name.title()}:", field_container)
+        add_field_with_formatting("Próxima cita médica:", self.proxima_cita_edit, 'proxima_cita')
         
         # Store field styles
         self.field_styles = {}
+        
+        # Add default styles for field labels
+        self.field_styles = {
+            'fecha_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'paciente_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'edad_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'biotipo_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'fototipo_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'envejecimiento_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'diagnostico_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'plan_tratamiento_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'rutina_am_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'rutina_pm_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'recomendacion_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True},
+            'proxima_cita_label': {'font': 'Helvetica', 'size': self.DEFAULT_FONT_SIZE, 'bold': True}
+        }
         
         # Connect text change signals for live preview
         for field in [self.fecha_edit, self.paciente_edit, self.edad_edit,
@@ -830,19 +1041,36 @@ class MedicalRecipeEditor(QMainWindow):
         
         # Function to wrap text and handle page breaks
         def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
+            # Store the original style to reapply after page breaks
+            original_style = style
+            
             if style:
                 font_name = style['font']
                 font_size = style['size']
+                
+                # Check if the font is available in ReportLab's standard fonts
+                standard_fonts = ['Helvetica', 'Times-Roman', 'Courier', 'Symbol', 'ZapfDingbats']
+                
+                # If the font is not a standard font, fall back to Helvetica
+                if font_name not in standard_fonts:
+                    font_name = 'Helvetica'
+                    
+                # Apply styling
                 if style.get('bold', False):
-                    font_name = f"{font_name}-Bold"
+                    if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                        font_name = f"{font_name}-Bold"
                 if style.get('italic', False):
-                    font_name = f"{font_name}-Italic"
-                if style.get('underline', False):
-                    font_name = f"{font_name}-Underline"
+                    if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                        font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
+                
+                # Note: ReportLab doesn't support underline directly in font names
+                # We'll handle underline separately if needed
+                
                 c.setFont(font_name, font_size)
             else:
-                c.setFont("Helvetica", 10)
-                font_size = 10
+                font_name = "Helvetica"
+                font_size = self.DEFAULT_FONT_SIZE
+                c.setFont(font_name, font_size)
             
             # Calculate available width for text
             available_width = work_width - 2 * margin
@@ -862,11 +1090,18 @@ class MedicalRecipeEditor(QMainWindow):
                     # Check if we need a new page
                     if y_pos - line_height < y_offset:
                         y_pos = create_new_page()
-                        # If this is part of a section, redraw the section header
-                        if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
-                                                                  "Rutina Facial", "Recomendación")):
-                            y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
-                    
+                        # Reapply the original style after page break
+                        if original_style:
+                            font_name = original_style['font']
+                            font_size = original_style['size']
+                            if original_style.get('bold', False):
+                                font_name = f"{font_name}-Bold"
+                            if original_style.get('italic', False):
+                                font_name = f"{font_name}-Italic"
+                            if original_style.get('underline', False):
+                                font_name = f"{font_name}-Underline"
+                            c.setFont(font_name, font_size)
+                        
                     # Draw current line
                     c.drawString(x_pos, y_pos, " ".join(current_line))
                     y_pos -= line_height
@@ -877,25 +1112,56 @@ class MedicalRecipeEditor(QMainWindow):
             if current_line:
                 if y_pos - line_height < y_offset:
                     y_pos = create_new_page()
-                    if not is_continuation and text.startswith(("Diagnóstico:", "Plan de tratamiento:", 
-                                                              "Rutina Facial", "Recomendación")):
-                        y_pos = draw_section_header(text.split(':')[0] + " (continuación):", y_pos, style)
+                    # Reapply the original style after page break
+                    if original_style:
+                        font_name = original_style['font']
+                        font_size = original_style['size']
+                        if original_style.get('bold', False):
+                            font_name = f"{font_name}-Bold"
+                        if original_style.get('italic', False):
+                            font_name = f"{font_name}-Italic"
+                        if original_style.get('underline', False):
+                            font_name = f"{font_name}-Underline"
+                        c.setFont(font_name, font_size)
+                    
                 
                 c.drawString(x_pos, y_pos, " ".join(current_line))
                 y_pos -= line_height
             
             return y_pos
         
-        # Draw form data with formatting
-        fecha = self.fecha_edit.date().toString("dd/MM/yyyy")
-        y_pos = draw_wrapped_text(f"Fecha: {fecha}", y_pos, self.get_field_style('fecha'))
+        # Draw form data with formatting - make labels bold but content regular
+        fecha = self.format_date_spanish(self.fecha_edit.date())
+        # For each field, split the label and content
+        fecha_label_style = self.get_field_style('fecha_label')
+        fecha_content_style = self.get_field_style('fecha')
+        c.setFont(fecha_label_style['font'] + ("-Bold" if fecha_label_style.get('bold', True) else ""), fecha_label_style['size'])
+        c.drawString(x_pos, y_pos, "Fecha: ")
+        label_width = c.stringWidth("Fecha: ", fecha_label_style['font'] + ("-Bold" if fecha_label_style.get('bold', True) else ""), fecha_label_style['size'])
+        c.setFont(fecha_content_style['font'] + ("-Bold" if fecha_content_style.get('bold', False) else ""), fecha_content_style['size'])
+        c.drawString(x_pos + label_width, y_pos, fecha)
+        y_pos -= line_height
         
-        y_pos = draw_wrapped_text(f"Paciente: {self.paciente_edit.text()}", y_pos, self.get_field_style('paciente'))
-        y_pos = draw_wrapped_text(f"Edad: {self.edad_edit.value()} años", y_pos, self.get_field_style('edad'))
-        y_pos = draw_wrapped_text(f"Biotipo: {self.biotipo_edit.currentText()}", y_pos, self.get_field_style('biotipo'))
-        y_pos = draw_wrapped_text(f"Fototipo: {self.fototipo_edit.currentText()}", y_pos, self.get_field_style('fototipo'))
-        y_pos = draw_wrapped_text(f"Grado de envejecimiento: {self.envejecimiento_edit.currentText()}", 
-                                y_pos, self.get_field_style('envejecimiento'))
+        # Apply the same pattern for other basic fields
+        fields = [
+            ("Paciente: ", self.paciente_edit.text(), 'paciente_label', 'paciente'),
+            (f"Edad: ", f"{self.edad_edit.value()} años", 'edad_label', 'edad'),
+            ("Biotipo: ", self.biotipo_edit.currentText(), 'biotipo_label', 'biotipo'),
+            ("Fototipo: ", self.fototipo_edit.currentText(), 'fototipo_label', 'fototipo'),
+            ("Grado de envejecimiento: ", self.envejecimiento_edit.currentText(), 'envejecimiento_label', 'envejecimiento')
+        ]
+        
+        for label_text, content_text, label_style_name, content_style_name in fields:
+            label_style = self.get_field_style(label_style_name)
+            content_style = self.get_field_style(content_style_name)
+            
+            c.setFont(label_style['font'] + ("-Bold" if label_style.get('bold', True) else ""), label_style['size'])
+            c.drawString(x_pos, y_pos, label_text)
+            label_width = c.stringWidth(label_text, label_style['font'] + ("-Bold" if label_style.get('bold', True) else ""), label_style['size'])
+            
+            c.setFont(content_style['font'] + ("-Bold" if content_style.get('bold', False) else ""), content_style['size'])
+            c.drawString(x_pos + label_width, y_pos, content_text)
+            y_pos -= line_height
         
         y_pos -= line_height * 0.5
         y_pos = draw_wrapped_text("Diagnóstico:", y_pos, self.get_field_style('diagnostico_label'))
@@ -939,20 +1205,58 @@ class MedicalRecipeEditor(QMainWindow):
         c.save()
         return temp_file.name
     
-    def show_format_dialog(self, field_name):
-        dialog = TextFormatDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.field_styles[field_name] = dialog.get_format()
-            self.update_preview()
-
+    def apply_format(self, field_name, format_type, value):
+        # Get or create style for this field
+        if field_name not in self.field_styles:
+            self.field_styles[field_name] = self.get_field_style(field_name)
+        
+        # Update the style
+        if format_type == 'font':
+            # Check if the font is available in ReportLab's standard fonts
+            standard_fonts = ['Helvetica', 'Times-Roman', 'Courier', 'Symbol', 'ZapfDingbats']
+            
+            # If user selects a non-standard font, show a warning but still store their preference
+            if value not in standard_fonts:
+                print(f"Warning: Font '{value}' may not be available in PDF. Using Helvetica as fallback.")
+        
+        self.field_styles[field_name][format_type] = value
+        
+        # Update preview
+        self.update_preview()
+    
     def get_field_style(self, field_name):
-        return self.field_styles.get(field_name, {
-            'font': 'Helvetica',
-            'size': 10,
-            'bold': False,
-            'italic': False,
-            'underline': False
-        })
+        # Adjust the DEFAULT_FONT_SIZE to appear correctly in the PDF
+        # PDF points are typically 1/72 inch, so we might need to adjust
+        adjusted_size = self.DEFAULT_FONT_SIZE * 0.9  # Slightly reduce size to match visual expectations
+        
+        # Default styles based on field type
+        if field_name.endswith('_label'):
+            # All labels (section headers and field labels) should be consistent
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': True,  # All labels are bold
+                'italic': False,
+                'underline': False
+            })
+        elif field_name in ['fecha', 'paciente', 'edad', 'biotipo', 'fototipo', 'envejecimiento', 'proxima_cita']:
+            # Basic info fields content (not bold)
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': False,  # Content is not bold
+                'italic': False,
+                'underline': False
+            })
+        else:
+            # Content fields (diagnostico, plan_tratamiento, etc.)
+            return self.field_styles.get(field_name, {
+                'font': 'Helvetica',
+                'size': adjusted_size,
+                'bold': False,
+                'italic': False,
+                'underline': False
+            })
 
     def update_preview(self):
         # Reset the timer
@@ -975,55 +1279,21 @@ class MedicalRecipeEditor(QMainWindow):
         except Exception as e:
             print(f"Error updating preview: {e}")
 
-class TextFormatDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.initUI()
+    def format_date_spanish(self, qdate):
+        """Format date in Spanish: 'Riobamba, 4 de marzo de 2025'"""
+        day = qdate.day()
+        month = qdate.month()
+        year = qdate.year()
         
-    def initUI(self):
-        self.setWindowTitle("Formato de Texto")
-        layout = QFormLayout()
-        
-        # Font selection
-        self.font_combo = QFontComboBox()
-        layout.addRow("Fuente:", self.font_combo)
-        
-        # Font size
-        self.size_spin = QSpinBox()
-        self.size_spin.setRange(8, 72)
-        self.size_spin.setValue(10)
-        layout.addRow("Tamaño:", self.size_spin)
-        
-        # Style options
-        self.bold_check = QCheckBox("Negrita")
-        self.italic_check = QCheckBox("Cursiva")
-        self.underline_check = QCheckBox("Subrayado")
-        
-        style_layout = QHBoxLayout()
-        style_layout.addWidget(self.bold_check)
-        style_layout.addWidget(self.italic_check)
-        style_layout.addWidget(self.underline_check)
-        layout.addRow("Estilo:", style_layout)
-        
-        # Buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | 
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-        
-        self.setLayout(layout)
-    
-    def get_format(self):
-        return {
-            'font': self.font_combo.currentFont().family(),
-            'size': self.size_spin.value(),
-            'bold': self.bold_check.isChecked(),
-            'italic': self.italic_check.isChecked(),
-            'underline': self.underline_check.isChecked()
+        # Spanish month names
+        months = {
+            1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+            5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+            9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
         }
+        
+        # Format the date
+        return f"Riobamba, {day} de {months[month]} de {year}"
 
 def main():
     app = QApplication(sys.argv)
@@ -1033,3 +1303,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
