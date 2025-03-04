@@ -33,20 +33,14 @@ class PDFPreviewWidget(QWidget):
         self.pdf_rect = None  # Store the actual PDF rectangle in widget coordinates
         self.setMinimumSize(400, 500)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMouseTracking(True)
         
-        # Create a container widget for the preview and navigation
-        self.container = QWidget()
-        self.container_layout = QVBoxLayout(self.container)
-        
-        # Create preview widget
-        self.preview_widget = QWidget()
-        self.preview_widget.setMinimumSize(400, 500)
-        self.preview_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Create main layout
+        main_layout = QVBoxLayout(self)
         
         # Create navigation panel with better styling
         nav_panel = QWidget()
         nav_layout = QHBoxLayout(nav_panel)
+        nav_panel.setMaximumHeight(50)  # Limit height of navigation panel
         
         self.prev_page_btn = QPushButton("←")
         self.next_page_btn = QPushButton("→")
@@ -83,18 +77,90 @@ class PDFPreviewWidget(QWidget):
         nav_layout.addWidget(self.page_label)
         nav_layout.addWidget(self.next_page_btn)
         nav_layout.addStretch()
+        nav_panel.setLayout(nav_layout)
         
-        # Add widgets to container layout
-        self.container_layout.addWidget(nav_panel)
-        self.container_layout.addWidget(self.preview_widget)
+        # Create PDF view area - this is a simple widget that will display the PDF
+        self.pdf_view = QWidget()
+        self.pdf_view.setMinimumSize(400, 450)
+        self.pdf_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.pdf_view.setMouseTracking(True)
         
-        # Set main layout
-        main_layout = QVBoxLayout(self)
-        main_layout.addWidget(self.container)
-        self.setLayout(main_layout)
+        # Set up the PDF view to handle painting and mouse events
+        self.pdf_view.paintEvent = lambda e: self._paint_pdf(e)
+        self.pdf_view.mousePressEvent = lambda e: self._mouse_press(e)
+        self.pdf_view.mouseMoveEvent = lambda e: self._mouse_move(e)
+        self.pdf_view.mouseReleaseEvent = lambda e: self._mouse_release(e)
+        
+        # Add widgets to main layout
+        main_layout.addWidget(nav_panel)
+        main_layout.addWidget(self.pdf_view)
         
         self.update_navigation()
+    
+    def _paint_pdf(self, event):
+        painter = QPainter(self.pdf_view)
         
+        # Draw white background
+        painter.fillRect(event.rect(), Qt.GlobalColor.white)
+        
+        if self.pixmap:
+            # Calculate the PDF rectangle in widget coordinates
+            x = (self.pdf_view.width() - self.pixmap.width()) / 2
+            y = (self.pdf_view.height() - self.pixmap.height()) / 2
+            self.pdf_rect = QRect(int(x), int(y), self.pixmap.width(), self.pixmap.height())
+            
+            # Draw the PDF preview centered
+            painter.drawPixmap(self.pdf_rect, self.pixmap)
+            
+            # Draw a border around the PDF
+            painter.setPen(QPen(QColor(200, 200, 200), 1))
+            painter.drawRect(self.pdf_rect)
+            
+            # Draw the selection rectangle if it exists
+            if self.selection_rect:
+                painter.setPen(QPen(QColor(255, 0, 0), 2, Qt.PenStyle.DashLine))
+                painter.drawRect(self.selection_rect)
+    
+    def _mouse_press(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.pdf_rect:
+            # Check if click is inside the PDF area
+            if self.pdf_rect.contains(event.position().toPoint()):
+                # Start selection
+                self.is_selecting = True
+                self.start_point = event.position().toPoint()
+                self.end_point = self.start_point
+                self.selection_rect = QRect(self.start_point, self.end_point)
+                self.pdf_view.update()
+    
+    def _mouse_move(self, event):
+        if self.is_selecting and self.pdf_rect:
+            # Update end point, but constrain to PDF area
+            current_pos = event.position().toPoint()
+            
+            # Constrain to PDF boundaries
+            x = max(self.pdf_rect.left(), min(current_pos.x(), self.pdf_rect.right()))
+            y = max(self.pdf_rect.top(), min(current_pos.y(), self.pdf_rect.bottom()))
+            
+            self.end_point = QPoint(x, y)
+            
+            # Update selection rectangle
+            self.selection_rect = QRect(self.start_point, self.end_point).normalized()
+            self.pdf_view.update()
+    
+    def _mouse_release(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
+            self.is_selecting = False
+            
+            # Finalize selection rectangle
+            if self.start_point and self.end_point:
+                self.selection_rect = QRect(self.start_point, self.end_point).normalized()
+                
+                # If the selection is too small, ignore it
+                if self.selection_rect.width() < 10 or self.selection_rect.height() < 10:
+                    self.selection_rect = None
+                
+                self.pdf_view.update()
+    
     def load_pdf(self, path):
         try:
             # Use PyMuPDF (fitz) to open the PDF
@@ -108,8 +174,8 @@ class PDFPreviewWidget(QWidget):
                 page_height = page.rect.height
                 
                 # Calculate scale factor to fit the widget while maintaining aspect ratio
-                width_scale = (self.width() - 40) / page_width  # 20px margin on each side
-                height_scale = (self.height() - 40) / page_height  # 20px margin on each side
+                width_scale = (self.pdf_view.width() - 40) / page_width  # 20px margin on each side
+                height_scale = (self.pdf_view.height() - 40) / page_height  # 20px margin on each side
                 self.scale_factor = min(width_scale, height_scale)
                 
                 self.update_preview()
@@ -144,8 +210,8 @@ class PDFPreviewWidget(QWidget):
             self.pixmap = QPixmap.fromImage(qimage)
             
             # Calculate the PDF rectangle in widget coordinates
-            x = (self.width() - self.pixmap.width()) / 2
-            y = (self.height() - self.pixmap.height()) / 2
+            x = (self.pdf_view.width() - self.pixmap.width()) / 2
+            y = (self.pdf_view.height() - self.pixmap.height()) / 2
             self.pdf_rect = QRect(int(x), int(y), self.pixmap.width(), self.pixmap.height())
             
             # Reset selection when loading a new PDF
@@ -154,7 +220,7 @@ class PDFPreviewWidget(QWidget):
             self.end_point = None
             
             # Update the widget
-            self.update()
+            self.pdf_view.update()
             
         except Exception as e:
             print(f"Error updating preview: {e}")
@@ -166,70 +232,6 @@ class PDFPreviewWidget(QWidget):
             y = (self.height() - self.pixmap.height()) / 2
             self.pdf_rect = QRect(int(x), int(y), self.pixmap.width(), self.pixmap.height())
         super().resizeEvent(event)
-    
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        
-        # Draw white background
-        painter.fillRect(event.rect(), Qt.GlobalColor.white)
-        
-        if self.pixmap:
-            # Calculate the PDF rectangle in widget coordinates
-            x = (self.width() - self.pixmap.width()) / 2
-            y = (self.height() - self.pixmap.height()) / 2
-            self.pdf_rect = QRect(int(x), int(y), self.pixmap.width(), self.pixmap.height())
-            
-            # Draw the PDF preview centered
-            painter.drawPixmap(self.pdf_rect, self.pixmap)
-            
-            # Draw a border around the PDF
-            painter.setPen(QPen(QColor(200, 200, 200), 1))
-            painter.drawRect(self.pdf_rect)
-            
-            # Draw the selection rectangle if it exists
-            if self.selection_rect:
-                painter.setPen(QPen(QColor(255, 0, 0), 2, Qt.PenStyle.DashLine))
-                painter.drawRect(self.selection_rect)
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.pdf_rect:
-            # Check if click is inside the PDF area
-            if self.pdf_rect.contains(event.position().toPoint()):
-                # Start selection
-                self.is_selecting = True
-                self.start_point = event.position().toPoint()
-                self.end_point = self.start_point
-                self.selection_rect = QRect(self.start_point, self.end_point)
-                self.update()
-    
-    def mouseMoveEvent(self, event):
-        if self.is_selecting and self.pdf_rect:
-            # Update end point, but constrain to PDF area
-            current_pos = event.position().toPoint()
-            
-            # Constrain to PDF boundaries
-            x = max(self.pdf_rect.left(), min(current_pos.x(), self.pdf_rect.right()))
-            y = max(self.pdf_rect.top(), min(current_pos.y(), self.pdf_rect.bottom()))
-            
-            self.end_point = QPoint(x, y)
-            
-            # Update selection rectangle
-            self.selection_rect = QRect(self.start_point, self.end_point).normalized()
-            self.update()
-    
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
-            self.is_selecting = False
-            
-            # Finalize selection rectangle
-            if self.start_point and self.end_point:
-                self.selection_rect = QRect(self.start_point, self.end_point).normalized()
-                
-                # If the selection is too small, ignore it
-                if self.selection_rect.width() < 10 or self.selection_rect.height() < 10:
-                    self.selection_rect = None
-                
-                self.update()
     
     def get_selection_rect(self):
         # Return the selection rectangle scaled back to the original PDF coordinates
@@ -265,11 +267,11 @@ class PDFPreviewWidget(QWidget):
             # Clean up
             os.unlink(temp_merged.name)
             
-            # Update navigation buttons
+            # Update navigation buttons - make sure this happens after loading the PDF
             self.update_navigation()
             
             # Force a repaint
-            self.update()
+            self.pdf_view.update()
             
         except Exception as e:
             print(f"Error updating preview: {e}")
@@ -290,12 +292,16 @@ class PDFPreviewWidget(QWidget):
         for i in range(num_pages):
             # If we need more template pages, copy the first page
             if i < len(template_pdf.pages):
+                # Use the existing template page
                 template_page = template_pdf.pages[i]
             else:
-                template_page = template_pdf.pages[0]
+                # Create a clean copy of the first page for additional pages
+                # This ensures we only get the background, not any content
+                template_page = PdfReader(template_path).pages[0]
             
             # If we have an overlay page, merge it
             if i < len(overlay_pdf.pages):
+                # Merge the overlay content onto the template
                 template_page.merge_page(overlay_pdf.pages[i])
             
             output.add_page(template_page)
