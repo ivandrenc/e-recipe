@@ -1250,7 +1250,7 @@ class MedicalRecipeEditor(QMainWindow):
         entry = selector.getSelectedEntry()
         if entry:
             if isinstance(field, QTextEdit):
-                field.setText(entry['content'])
+                field.setPlainText(entry['content'])
             elif isinstance(field, QLineEdit):
                 field.setText(entry['content'])
             

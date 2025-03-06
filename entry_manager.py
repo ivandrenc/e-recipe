@@ -352,22 +352,49 @@ class EntrySelector(QComboBox):
                 # User selected an entry
                 selected_entry = dialog.getSelectedEntry()
                 if selected_entry:
-                    # Find the entry in the combo box
-                    self.loadEntries()  # Reload entries first
+                    # Reload entries
+                    self.loadEntries()
                     
-                    # Return the selected entry content
-                    return selected_entry
+                    # Find and select the entry in the combo box
+                    for i in range(2, self.count()):
+                        if self.itemText(i) == selected_entry['title']:
+                            self.setCurrentIndex(i)
+                            break
+                    
+                    # Get the main window (MedicalRecipeEditor)
+                    main_window = self.parent().window()
+                    
+                    # Find the associated field based on category
+                    field_map = {
+                        'diagnostico': main_window.diagnostico_edit,
+                        'plan_tratamiento': main_window.plan_tratamiento_edit,
+                        'rutina_am': main_window.rutina_am_edit,
+                        'rutina_pm': main_window.rutina_pm_edit,
+                        'recomendacion': main_window.recomendacion_edit
+                    }
+                    
+                    field = field_map.get(self.category)
+                    if field:
+                        main_window.load_entry_content(self, field)
             
             # Reload entries in case they were modified
             self.loadEntries()
         elif index > 1 and index - 2 < len(self.entries):
-            # Return the selected entry
-            entry_id, title, content, created_at, updated_at = self.entries[index - 2]
-            return {
-                "id": entry_id,
-                "title": title,
-                "content": content
+            # Get the main window (MedicalRecipeEditor)
+            main_window = self.parent().window()
+            
+            # Find the associated field based on category
+            field_map = {
+                'diagnostico': main_window.diagnostico_edit,
+                'plan_tratamiento': main_window.plan_tratamiento_edit,
+                'rutina_am': main_window.rutina_am_edit,
+                'rutina_pm': main_window.rutina_pm_edit,
+                'recomendacion': main_window.recomendacion_edit
             }
+            
+            field = field_map.get(self.category)
+            if field:
+                main_window.load_entry_content(self, field)
         
         return None
     
