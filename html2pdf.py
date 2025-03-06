@@ -538,8 +538,18 @@ class PDFPreviewWidget(QWidget):
                     y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('recomendacion'))
             
             y_pos -= line_height * 0.5
+            # Format próxima cita like the fecha field
             proxima_cita = self.proxima_cita_edit.date().toString("dd/MM/yyyy")
-            y_pos = draw_wrapped_text(f"Próxima cita médica: {proxima_cita}", y_pos, self.get_field_style('proxima_cita'))
+            proxima_cita_label_style = self.get_field_style('proxima_cita_label')
+            proxima_cita_content_style = self.get_field_style('proxima_cita')
+            
+            c.setFont(proxima_cita_label_style['font'] + ("-Bold" if proxima_cita_label_style.get('bold', True) else ""), proxima_cita_label_style['size'])
+            c.drawString(x_pos, y_pos, "Próxima cita médica: ")
+            label_width = c.stringWidth("Próxima cita médica: ", proxima_cita_label_style['font'] + ("-Bold" if proxima_cita_label_style.get('bold', True) else ""), proxima_cita_label_style['size'])
+            
+            c.setFont(proxima_cita_content_style['font'] + ("-Bold" if proxima_cita_content_style.get('bold', False) else ""), proxima_cita_content_style['size'])
+            c.drawString(x_pos + label_width, y_pos, proxima_cita)
+            y_pos -= line_height
             
             c.save()
             return temp_file.name
@@ -1149,8 +1159,18 @@ class MedicalRecipeEditor(QMainWindow):
                 y_pos = draw_wrapped_text(line, y_pos, self.get_field_style('recomendacion'))
         
         y_pos -= line_height * 0.5
+        # Format próxima cita like the fecha field
         proxima_cita = self.proxima_cita_edit.date().toString("dd/MM/yyyy")
-        y_pos = draw_wrapped_text(f"Próxima cita médica: {proxima_cita}", y_pos, self.get_field_style('proxima_cita'))
+        proxima_cita_label_style = self.get_field_style('proxima_cita_label')
+        proxima_cita_content_style = self.get_field_style('proxima_cita')
+        
+        c.setFont(proxima_cita_label_style['font'] + ("-Bold" if proxima_cita_label_style.get('bold', True) else ""), proxima_cita_label_style['size'])
+        c.drawString(x_pos, y_pos, "Próxima cita médica: ")
+        label_width = c.stringWidth("Próxima cita médica: ", proxima_cita_label_style['font'] + ("-Bold" if proxima_cita_label_style.get('bold', True) else ""), proxima_cita_label_style['size'])
+        
+        c.setFont(proxima_cita_content_style['font'] + ("-Bold" if proxima_cita_content_style.get('bold', False) else ""), proxima_cita_content_style['size'])
+        c.drawString(x_pos + label_width, y_pos, proxima_cita)
+        y_pos -= line_height
         
         c.save()
         return temp_file.name
