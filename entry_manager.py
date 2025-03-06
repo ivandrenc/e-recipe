@@ -127,6 +127,15 @@ class EntryManagerDialog(QDialog):
         self.category = category
         self.db = EntryDatabase()
         self.selected_entry_id = None
+        self.entry_selector = None
+        
+        # Find the EntrySelector in the parent hierarchy
+        parent_widget = parent
+        while parent_widget:
+            if isinstance(parent_widget, EntrySelector):
+                self.entry_selector = parent_widget
+                break
+            parent_widget = parent_widget.parent()
         
         # Map category to display name
         category_display_names = {
@@ -305,6 +314,36 @@ class EntryManagerDialog(QDialog):
         self.db.close()
         super().closeEvent(event)
 
+    def accept(self):
+        """Override accept to update the selector before closing"""
+        selected_entry = self.getSelectedEntry()
+        if selected_entry and self.entry_selector:
+            # Reload entries to ensure we have the latest data
+            self.entry_selector.loadEntries()
+            
+            # Find and select the entry in the combo box
+            for i in range(2, self.entry_selector.count()):
+                if self.entry_selector.itemText(i) == selected_entry['title']:
+                    self.entry_selector.setCurrentIndex(i)
+                    break
+            
+            # Get the main window and update the field content
+            main_window = self.entry_selector.parent().window()
+            field_map = {
+                'diagnostico': main_window.diagnostico_edit,
+                'plan_tratamiento': main_window.plan_tratamiento_edit,
+                'rutina_am': main_window.rutina_am_edit,
+                'rutina_pm': main_window.rutina_pm_edit,
+                'recomendacion': main_window.recomendacion_edit
+            }
+            
+            field = field_map.get(self.category)
+            if field:
+                main_window.load_entry_content(self.entry_selector, field)
+        
+        # Call the parent class's accept method to close the dialog
+        super().accept()
+
 class EntrySelector(QComboBox):
     """Custom ComboBox for selecting saved entries"""
     
@@ -347,37 +386,11 @@ class EntrySelector(QComboBox):
             self.setCurrentIndex(0)
             
             # Open entry manager dialog
-            dialog = EntryManagerDialog(self.category, self.parent())
+            dialog = EntryManagerDialog(self.category, self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                # User selected an entry
-                selected_entry = dialog.getSelectedEntry()
-                if selected_entry:
-                    # Reload entries
-                    self.loadEntries()
-                    
-                    # Find and select the entry in the combo box
-                    for i in range(2, self.count()):
-                        if self.itemText(i) == selected_entry['title']:
-                            self.setCurrentIndex(i)
-                            break
-                    
-                    # Get the main window (MedicalRecipeEditor)
-                    main_window = self.parent().window()
-                    
-                    # Find the associated field based on category
-                    field_map = {
-                        'diagnostico': main_window.diagnostico_edit,
-                        'plan_tratamiento': main_window.plan_tratamiento_edit,
-                        'rutina_am': main_window.rutina_am_edit,
-                        'rutina_pm': main_window.rutina_pm_edit,
-                        'recomendacion': main_window.recomendacion_edit
-                    }
-                    
-                    field = field_map.get(self.category)
-                    if field:
-                        main_window.load_entry_content(self, field)
+                return  # Dialog will handle the update in its accept method
             
-            # Reload entries in case they were modified
+            # Only reload entries if we didn't select an entry
             self.loadEntries()
         elif index > 1 and index - 2 < len(self.entries):
             # Get the main window (MedicalRecipeEditor)
