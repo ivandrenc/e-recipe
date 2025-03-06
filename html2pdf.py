@@ -376,17 +376,8 @@ class PDFPreviewWidget(QWidget):
                 # Reset the position to the top of the working area
                 return y_offset + work_height - margin
             
-            # Function to draw section header
-            def draw_section_header(text, y_pos, style=None):
-                if style:
-                    c.setFont(style['font'], style['size'])
-                else:
-                    c.setFont("Helvetica-Bold", 12)
-                c.drawString(x_pos, y_pos, text)
-                return y_pos - line_height * 1.5
-            
             # Function to wrap text and handle page breaks
-            def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
+            def draw_wrapped_text(text, y_pos, style=None):
                 # Store the original style to reapply after page breaks
                 original_style = style
                 
@@ -613,7 +604,7 @@ class MedicalRecipeEditor(QMainWindow):
         self.preview_timer.timeout.connect(self._do_update_preview)
         
         # Global font size setting
-        self.DEFAULT_FONT_SIZE = 9
+        self.DEFAULT_FONT_SIZE = 7
         
         self.initUI()
         
@@ -1020,7 +1011,7 @@ class MedicalRecipeEditor(QMainWindow):
         margin = 10  # 10 points margin
         x_pos = x_offset + margin
         y_pos = y_offset + work_height - margin
-        line_height = 14  # Height for each line of text
+        line_height = 8  # Height for each line of text
         
         # Function to create a new page with the same template
         def create_new_page():
