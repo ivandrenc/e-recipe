@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QDialogButtonBox, QFontComboBox, QCheckBox,
                             QToolBar, QToolButton, QListWidget, QInputDialog)
 from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF, QTimer, QSize
-from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen, QIcon, QFont, QAction, QTextCharFormat, QTextDocument
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen, QIcon, QFont, QAction
 from PyQt6.QtPrintSupport import QPrinter
 
 # Since PyQt6-PDF doesn't exist, let's use an alternative approach
@@ -369,7 +369,7 @@ class PDFPreviewWidget(QWidget):
             margin = 10  # 10 points margin
             x_pos = x_offset + margin
             y_pos = y_offset + work_height - margin
-            line_height = 8  # Height for each line of text
+            line_height = 14  # Height for each line of text
             
             # Function to create a new page with the same template
             def create_new_page():
@@ -379,17 +379,8 @@ class PDFPreviewWidget(QWidget):
                 # Reset the position to the top of the working area
                 return y_offset + work_height - margin
             
-            # Function to draw section header
-            def draw_section_header(text, y_pos, style=None):
-                if style:
-                    c.setFont(style['font'], style['size'])
-                else:
-                    c.setFont("Helvetica-Bold", 12)
-                c.drawString(x_pos, y_pos, text)
-                return y_pos - line_height * 1.5
-            
             # Function to wrap text and handle page breaks
-            def draw_wrapped_text(text, y_pos, style=None, is_continuation=False):
+            def draw_wrapped_text(text, y_pos, style=None):
                 # Store the original style to reapply after page breaks
                 original_style = style
                 
@@ -408,9 +399,9 @@ class PDFPreviewWidget(QWidget):
                     if style.get('bold', False):
                         if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
                             font_name = f"{font_name}-Bold"
-                        if style.get('italic', False):
-                            if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
-                                font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
+                    if style.get('italic', False):
+                        if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                            font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
                         
                     # Note: ReportLab doesn't support underline directly in font names
                     # We'll handle underline separately if needed
@@ -616,219 +607,9 @@ class PDFPreviewWidget(QWidget):
                 'underline': False
             })
 
-    def update_preview(self):
-        # Reset the timer
-        self.preview_timer.stop()
-        # Start the timer (500ms delay)
-        self.preview_timer.start(500)
-    
-    def _do_update_preview(self):
-        # Only update preview if we have a working area defined
-        if not self.working_area:
-            return
-        
-        try:
-            # Create a temporary overlay with current content
-            overlay_pdf = self.create_overlay()
-            
-            if overlay_pdf:
-                # Update the preview with the new overlay
-                self.update_with_overlay(overlay_pdf)
-        except Exception as e:
-            print(f"Error updating preview: {e}")
-
-    def load_entry_content(self, selector, field):
-        """Load selected entry content into the field"""
-        entry = selector.getSelectedEntry()
-        if entry:
-            if isinstance(field, FormattedTextEdit):
-                field.setHtml(entry['content'])  # Use HTML if stored that way
-            elif isinstance(field, QLineEdit):
-                field.setText(entry['content'])
-            
-            # Update preview
-            self.update_preview()
-
-    def save_current_entry(self, category, field, field_name):
-        """Save current field content as a new entry"""
-        if isinstance(field, FormattedTextEdit):
-            content = field.toHtml()  # Save as HTML to preserve formatting
-        elif isinstance(field, QLineEdit):
-            content = field.text()
-        else:
-            return
-        
-        if not content.strip():
-            QMessageBox.warning(self, "Error", "No hay contenido para guardar.")
-            return
-        
-        # Ask for a title
-        title, ok = QInputDialog.getText(
-            self, "Guardar Entrada", 
-            "Ingrese un título para esta entrada:",
-            QLineEdit.EchoMode.Normal
-        )
-        
-        if ok and title.strip():
-            try:
-                # Save to database
-                db = EntryDatabase()
-                db.add_entry(category, title, content)
-                db.close()
-                
-                # Reload entries in selector
-                selector = self.entry_selectors.get(field_name)
-                if selector:
-                    selector.loadEntries()
-                
-                QMessageBox.information(self, "Éxito", "Entrada guardada correctamente.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error al guardar la entrada: {str(e)}")
-
-class FormattedTextEdit(QTextEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptRichText(True)
-        self.create_toolbar()
-
-    def create_toolbar(self):
-        self.toolbar = QToolBar(self)
-        
-        # Bold action
-        bold_action = QAction(QIcon.fromTheme("format-text-bold"), "Bold", self)
-        bold_action.setShortcut("Ctrl+B")
-        bold_action.setCheckable(True)
-        bold_action.toggled.connect(self.toggle_bold)
-        
-        # Italic action
-        italic_action = QAction(QIcon.fromTheme("format-text-italic"), "Italic", self)
-        italic_action.setShortcut("Ctrl+I")
-        italic_action.setCheckable(True)
-        italic_action.toggled.connect(self.toggle_italic)
-        
-        # Font family selector (only ReportLab standard fonts)
-        self.font_combo = QComboBox(self)
-        self.font_combo.addItems(['Helvetica', 'Times-Roman', 'Courier'])
-        self.font_combo.currentTextChanged.connect(self.change_font)
-        
-        # Alignment actions
-        align_left = QAction(QIcon.fromTheme("format-justify-left"), "Align Left", self)
-        align_center = QAction(QIcon.fromTheme("format-justify-center"), "Center", self)
-        align_right = QAction(QIcon.fromTheme("format-justify-right"), "Align Right", self)
-        align_justify = QAction(QIcon.fromTheme("format-justify-fill"), "Justify", self)
-        
-        align_left.triggered.connect(lambda: self.setAlignment(Qt.AlignmentFlag.AlignLeft))
-        align_center.triggered.connect(lambda: self.setAlignment(Qt.AlignmentFlag.AlignCenter))
-        align_right.triggered.connect(lambda: self.setAlignment(Qt.AlignmentFlag.AlignRight))
-        align_justify.triggered.connect(lambda: self.setAlignment(Qt.AlignmentFlag.AlignJustify))
-        
-        # Add actions to toolbar
-        self.toolbar.addAction(bold_action)
-        self.toolbar.addAction(italic_action)
-        self.toolbar.addWidget(self.font_combo)
-        self.toolbar.addSeparator()
-        self.toolbar.addAction(align_left)
-        self.toolbar.addAction(align_center)
-        self.toolbar.addAction(align_right)
-        self.toolbar.addAction(align_justify)
-        
-        # Style the toolbar
-        self.toolbar.setStyleSheet("""
-            QToolBar {
-                spacing: 2px;
-                padding: 2px;
-                background: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            QToolButton {
-                padding: 4px;
-                border-radius: 2px;
-            }
-            QToolButton:hover {
-                background: #e0e0e0;
-            }
-            QToolButton:checked {
-                background: #d0d0d0;
-            }
-        """)
-
-    def toggle_bold(self, checked):
-        fmt = QTextCharFormat()
-        fmt.setFontWeight(QFont.Weight.Bold if checked else QFont.Weight.Normal)
-        self.merge_format(fmt)
-
-    def toggle_italic(self, checked):
-        fmt = QTextCharFormat()
-        fmt.setFontItalic(checked)
-        self.merge_format(fmt)
-
-    def change_font(self, family):
-        fmt = QTextCharFormat()
-        fmt.setFontFamily(family)
-        self.merge_format(fmt)
-
-    def merge_format(self, fmt):
-        cursor = self.textCursor()
-        if cursor.hasSelection():
-            cursor.mergeCharFormat(fmt)
-        else:
-            self.mergeCurrentCharFormat(fmt)
-
-    def get_formatted_text(self):
-        """Returns a list of formatted text blocks with their styles"""
-        doc = self.document()
-        formatted_blocks = []
-        
-        for block_num in range(doc.blockCount()):
-            block = doc.findBlockByNumber(block_num)
-            text = block.text()
-            
-            # Get block alignment
-            alignment = block.blockFormat().alignment()
-            
-            # Process text fragments within the block
-            cursor = QTextCursor(block)
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
-            
-            fragments = []
-            fragment_cursor = QTextCursor(block)
-            fragment = fragment_cursor.fragment()
-            
-            while fragment.isValid():
-                char_format = fragment.charFormat()
-                style = {
-                    'font': char_format.fontFamily(),
-                    'bold': char_format.fontWeight() == QFont.Weight.Bold,
-                    'italic': char_format.fontItalic(),
-                    'size': self.DEFAULT_FONT_SIZE,  # Use default size from parent
-                }
-                
-                # Ensure font is ReportLab compatible
-                if style['font'] not in ['Helvetica', 'Times-Roman', 'Courier']:
-                    style['font'] = 'Helvetica'
-                
-                fragments.append({
-                    'text': fragment.text(),
-                    'style': style
-                })
-                
-                fragment_cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
-                fragment = fragment_cursor.fragment()
-            
-            formatted_blocks.append({
-                'fragments': fragments,
-                'alignment': alignment
-            })
-        
-        return formatted_blocks
-
 class MedicalRecipeEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.version = "1.0.0"
-        self.setWindowTitle(f'Editor de Recetas Médicas v{self.version}')
         self.template_pdf_path = None
         self.working_area = None
         self.preview_timer = QTimer()
@@ -1238,9 +1019,9 @@ class MedicalRecipeEditor(QMainWindow):
                 if style.get('bold', False):
                     if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
                         font_name = f"{font_name}-Bold"
-                    if style.get('italic', False):
-                        if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
-                            font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
+                if style.get('italic', False):
+                    if font_name in ['Helvetica', 'Times-Roman', 'Courier']:
+                        font_name = f"{font_name}-Oblique" if font_name == 'Helvetica' else f"{font_name}-Italic"
                 
                 # Note: ReportLab doesn't support underline directly in font names
                 # We'll handle underline separately if needed
@@ -1488,8 +1269,8 @@ class MedicalRecipeEditor(QMainWindow):
         """Load selected entry content into the field"""
         entry = selector.getSelectedEntry()
         if entry:
-            if isinstance(field, FormattedTextEdit):
-                field.setHtml(entry['content'])  # Use HTML if stored that way
+            if isinstance(field, QTextEdit):
+                field.setPlainText(entry['content'])
             elif isinstance(field, QLineEdit):
                 field.setText(entry['content'])
             
@@ -1498,8 +1279,9 @@ class MedicalRecipeEditor(QMainWindow):
     
     def save_current_entry(self, category, field, field_name):
         """Save current field content as a new entry"""
-        if isinstance(field, FormattedTextEdit):
-            content = field.toHtml()  # Save as HTML to preserve formatting
+        # Get current content
+        if isinstance(field, QTextEdit):
+            content = field.toPlainText()
         elif isinstance(field, QLineEdit):
             content = field.text()
         else:
