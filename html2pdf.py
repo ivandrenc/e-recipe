@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QDateEdit, QSpinBox, QComboBox, QMessageBox,
                             QScrollArea, QFrame, QSizePolicy, QDialog,
                             QDialogButtonBox, QFontComboBox, QCheckBox,
-                            QToolBar, QToolButton)
+                            QToolBar, QToolButton, QListWidget, QInputDialog)
 from PyQt6.QtCore import Qt, QDate, QRect, QPoint, QSizeF, QTimer, QSize
 from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QPageSize, QScreen, QIcon, QFont, QAction
 from PyQt6.QtPrintSupport import QPrinter
@@ -18,6 +18,9 @@ from PyQt6.QtPrintSupport import QPrinter
 import fitz  # PyMuPDF
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
+
+# Import the entry manager components
+from entry_manager import EntryDatabase, EntryManagerDialog, EntrySelector
 
 class PDFPreviewWidget(QWidget):
     def __init__(self, parent=None):
@@ -606,6 +609,9 @@ class MedicalRecipeEditor(QMainWindow):
         # Global font size setting
         self.DEFAULT_FONT_SIZE = 7
         
+        # Initialize entry selectors dictionary
+        self.entry_selectors = {}
+        
         self.initUI()
         
     def initUI(self):
@@ -673,17 +679,44 @@ class MedicalRecipeEditor(QMainWindow):
         form_layout = QFormLayout()
         form_layout.setSpacing(10)  # Add more spacing between form rows
         
-        # Create a function to add a field with formatting toolbar
-        def add_field_with_formatting(label, field, field_name):
+        # Create a function to add a field with entry selector and formatting toolbar
+        def add_field_with_entry_selector(label, field, field_name, category):
             container = QWidget()
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(2)
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(2)
             
-            # Add the field
-            layout.addWidget(field)
+            # Create header with title and selector
+            header = QWidget()
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
             
-            # Create formatting toolbar
+            # Add entry selector
+            entry_selector = EntrySelector(category, self)
+            entry_selector.setMinimumWidth(200)
+            
+            # Store the selector for later access
+            self.entry_selectors[field_name] = entry_selector
+            
+            # Add save button
+            save_btn = QPushButton("Guardar")
+            save_btn.setToolTip("Guardar contenido actual como nueva entrada")
+            save_btn.setMaximumWidth(80)
+            save_btn.clicked.connect(lambda: self.save_current_entry(category, field, field_name))
+            
+            # Add selector and buttons to header
+            header_layout.addWidget(QLabel("Entradas guardadas:"))
+            header_layout.addWidget(entry_selector)
+            header_layout.addWidget(save_btn)
+            
+            # Connect entry selector to update field
+            entry_selector.currentIndexChanged.connect(
+                lambda index: self.load_entry_content(entry_selector, field))
+            
+            # Add header to container
+            container_layout.addWidget(header)
+            
+            # Add formatting toolbar
             toolbar = QToolBar()
             toolbar.setIconSize(QSize(16, 16))
             toolbar.setStyleSheet("""
@@ -718,7 +751,7 @@ class MedicalRecipeEditor(QMainWindow):
                 
                 font_combo.setCurrentText("Helvetica")
                 font_combo.setMaximumWidth(150)
-                font_combo.currentTextChanged.connect(  # Use currentTextChanged instead of currentFontChanged
+                font_combo.currentTextChanged.connect(
                     lambda text: self.apply_format(field_name, 'font', text))
                 toolbar.addWidget(font_combo)
                 
@@ -760,11 +793,11 @@ class MedicalRecipeEditor(QMainWindow):
                 lambda checked: self.apply_format(field_name, 'underline', checked))
             toolbar.addAction(underline_action)
             
-            # Add toolbar to layout
-            layout.addWidget(toolbar)
+            # Add toolbar to container
+            container_layout.addWidget(toolbar)
             
-            # Add to form layout
-            form_layout.addRow(label, container)
+            # Add field to container
+            container_layout.addWidget(field)
             
             # Store the formatting controls for later access
             self.formatting_controls[field_name] = {
@@ -776,6 +809,9 @@ class MedicalRecipeEditor(QMainWindow):
             if isinstance(field, QTextEdit) or isinstance(field, QLineEdit):
                 self.formatting_controls[field_name]['font_combo'] = font_combo
                 self.formatting_controls[field_name]['size_spin'] = size_spin
+            
+            # Add to form layout
+            form_layout.addRow(label, container)
         
         # Initialize formatting controls dictionary
         self.formatting_controls = {}
@@ -784,55 +820,55 @@ class MedicalRecipeEditor(QMainWindow):
         self.fecha_edit = QDateEdit()
         self.fecha_edit.setDate(QDate.currentDate())
         self.fecha_edit.setCalendarPopup(True)
-        add_field_with_formatting("Fecha:", self.fecha_edit, 'fecha')
+        add_field_with_entry_selector("Fecha:", self.fecha_edit, 'fecha', 'fecha')
         
         # Patient info
         self.paciente_edit = QLineEdit()
-        add_field_with_formatting("Paciente:", self.paciente_edit, 'paciente')
+        add_field_with_entry_selector("Paciente:", self.paciente_edit, 'paciente', 'paciente')
         
         self.edad_edit = QSpinBox()
         self.edad_edit.setRange(0, 120)
-        add_field_with_formatting("Edad:", self.edad_edit, 'edad')
+        add_field_with_entry_selector("Edad:", self.edad_edit, 'edad', 'edad')
         
         # Patient characteristics
         self.biotipo_edit = QComboBox()
         self.biotipo_edit.addItems(["Normolíneo", "Brevilíneo", "Longilíneo"])
-        add_field_with_formatting("Biotipo:", self.biotipo_edit, 'biotipo')
+        add_field_with_entry_selector("Biotipo:", self.biotipo_edit, 'biotipo', 'biotipo')
         
         self.fototipo_edit = QComboBox()
         self.fototipo_edit.addItems(["I", "II", "III", "IV", "V", "VI"])
-        add_field_with_formatting("Fototipo:", self.fototipo_edit, 'fototipo')
+        add_field_with_entry_selector("Fototipo:", self.fototipo_edit, 'fototipo', 'fototipo')
         
         self.envejecimiento_edit = QComboBox()
         self.envejecimiento_edit.addItems(["Leve", "Moderado", "Avanzado"])
-        add_field_with_formatting("Grado de envejecimiento:", self.envejecimiento_edit, 'envejecimiento')
+        add_field_with_entry_selector("Grado de envejecimiento:", self.envejecimiento_edit, 'envejecimiento', 'envejecimiento')
         
-        # Medical info - make text fields bigger
+        # Medical info - make text fields bigger and add entry selectors
         self.diagnostico_edit = QTextEdit()
         self.diagnostico_edit.setMinimumHeight(120)  # Taller text area
-        add_field_with_formatting("Diagnóstico:", self.diagnostico_edit, 'diagnostico')
+        add_field_with_entry_selector("Diagnóstico:", self.diagnostico_edit, 'diagnostico', 'diagnostico')
         
         self.plan_tratamiento_edit = QTextEdit()
         self.plan_tratamiento_edit.setMinimumHeight(120)
-        add_field_with_formatting("Plan de tratamiento:", self.plan_tratamiento_edit, 'plan_tratamiento')
+        add_field_with_entry_selector("Plan de tratamiento:", self.plan_tratamiento_edit, 'plan_tratamiento', 'plan_tratamiento')
         
         self.rutina_am_edit = QTextEdit()
         self.rutina_am_edit.setMinimumHeight(120)
-        add_field_with_formatting("Rutina Facial (AM):", self.rutina_am_edit, 'rutina_am')
+        add_field_with_entry_selector("Rutina Facial (AM):", self.rutina_am_edit, 'rutina_am', 'rutina_am')
         
         self.rutina_pm_edit = QTextEdit()
         self.rutina_pm_edit.setMinimumHeight(120)
-        add_field_with_formatting("Rutina Facial (PM):", self.rutina_pm_edit, 'rutina_pm')
+        add_field_with_entry_selector("Rutina Facial (PM):", self.rutina_pm_edit, 'rutina_pm', 'rutina_pm')
         
         self.recomendacion_edit = QTextEdit()
         self.recomendacion_edit.setMinimumHeight(120)
-        add_field_with_formatting("Recomendación Antiestres y Performance:", self.recomendacion_edit, 'recomendacion')
+        add_field_with_entry_selector("Recomendación Antiestres y Performance:", self.recomendacion_edit, 'recomendacion', 'recomendacion')
         
         # Next appointment
         self.proxima_cita_edit = QDateEdit()
         self.proxima_cita_edit.setDate(QDate.currentDate().addDays(30))
         self.proxima_cita_edit.setCalendarPopup(True)
-        add_field_with_formatting("Próxima cita médica:", self.proxima_cita_edit, 'proxima_cita')
+        add_field_with_entry_selector("Próxima cita médica:", self.proxima_cita_edit, 'proxima_cita', 'proxima_cita')
         
         # Store field styles
         self.field_styles = {}
@@ -1285,6 +1321,55 @@ class MedicalRecipeEditor(QMainWindow):
         
         # Format the date
         return f"Riobamba, {day} de {months[month]} de {year}"
+
+    def load_entry_content(self, selector, field):
+        """Load selected entry content into the field"""
+        entry = selector.getSelectedEntry()
+        if entry:
+            if isinstance(field, QTextEdit):
+                field.setText(entry['content'])
+            elif isinstance(field, QLineEdit):
+                field.setText(entry['content'])
+            
+            # Update preview
+            self.update_preview()
+    
+    def save_current_entry(self, category, field, field_name):
+        """Save current field content as a new entry"""
+        # Get current content
+        if isinstance(field, QTextEdit):
+            content = field.toPlainText()
+        elif isinstance(field, QLineEdit):
+            content = field.text()
+        else:
+            return
+        
+        if not content.strip():
+            QMessageBox.warning(self, "Error", "No hay contenido para guardar.")
+            return
+        
+        # Ask for a title
+        title, ok = QInputDialog.getText(
+            self, "Guardar Entrada", 
+            "Ingrese un título para esta entrada:",
+            QLineEdit.EchoMode.Normal
+        )
+        
+        if ok and title.strip():
+            try:
+                # Save to database
+                db = EntryDatabase()
+                db.add_entry(category, title, content)
+                db.close()
+                
+                # Reload entries in selector
+                selector = self.entry_selectors.get(field_name)
+                if selector:
+                    selector.loadEntries()
+                
+                QMessageBox.information(self, "Éxito", "Entrada guardada correctamente.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Error al guardar la entrada: {str(e)}")
 
 def main():
     app = QApplication(sys.argv)
